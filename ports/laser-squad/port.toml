@@ -1,0 +1,21 @@
+schema = 1
+id = "laser-squad"
+title = "Laser Squad"
+source_platform = "zx-spectrum-48k"
+target_platform = "tvc"
+output = "dist/lasersqd_tvc.dsk"
+output_kind = "dsk"
+
+[source_tap]
+url = "https://www.worldofspectrum.org//pub/sinclair/games/l/LaserSquad.tap.zip"
+archive_path = "sources/LaserSquad.tap.zip"
+archive_member = "LASERSQD.TAP"
+archive_sha256 = "38bc3355832d0b5751ecbd5ba23e1a43e9270bf3953d78d46c8eda1253aaee4c"
+path = "sources/LASERSQD.TAP"
+sha256 = "7776b18fddf23faac3b7bd95eacf3fdfeec92f8245978fd4fde1028cfeca9791"
+generated_toml_sha256 = "b0ea11384c918fcee9cf9130b78e3692066640dafbafd5d749f688a34785fe16"
+
+[commands]
+prepare = "python3 prepare.py"
+build = "python3 build.py"
+verify = "python3 verify.py"

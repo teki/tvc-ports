@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Editors and operating systems
+.DS_Store
+*.swp
+
+# Per-port generated output
+**/build/
+**/dist/
+**/work/
+
+# Local emulator state and diagnostics
+rtvc.toml
+rtvc-workspace.json
+*.rtvcsnap
+*.rtvcsnap.zip
+*.png
+*.log
+
+# Generated media is reproducible from tracked inputs
+*.cas
+*.CAS
+*.dsk
+*.DSK
+*.tap.toml
+*.TAP.toml
+
+# Original source media is ignored by default. A port may negate a particular
+# file only after its redistribution status has been decided explicitly.
+ports/**/*.tap
+ports/**/*.TAP
+ports/**/*.tzx
+ports/**/*.TZX
+ports/**/*.z80
+ports/**/*.Z80
+ports/**/*.sna
+ports/**/*.SNA
+ports/**/*.cdt
+ports/**/*.CDT
+ports/**/sources/*.zip
+
+# Original media downloaded by preparation remains local.

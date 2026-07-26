@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Run the compatible rtvc emulator."""
+
+from pathlib import Path
+import sys
+
+from rtvc import absolute_cli_paths, exec_tool, find_runtime_root, find_tool
+
+
+name = Path(__file__).name
+tool = find_tool(name)
+arguments = absolute_cli_paths(
+    sys.argv[1:],
+    path_options={"-d", "--disk", "-t", "--tape", "-i", "--inject"},
+    value_options={"-p", "--port"},
+)
+exec_tool(name, arguments, cwd=find_runtime_root(tool))

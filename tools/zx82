@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Run the compatible Zx82 Spectrum reference emulator."""
+
+from pathlib import Path
+import sys
+
+from rtvc import absolute_cli_paths, exec_tool, find_runtime_root, find_tool
+
+
+name = Path(__file__).name
+tool = find_tool(name)
+arguments = absolute_cli_paths(
+    sys.argv[1:],
+    path_options={"--rom", "--z80", "--screenshot"},
+    value_options={"--frames"},
+)
+exec_tool(name, arguments, cwd=find_runtime_root(tool))

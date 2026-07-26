@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""Run the compatible rtvc Z80 disassembler."""
+
+from pathlib import Path
+import sys
+
+from rtvc import exec_tool
+
+
+exec_tool(Path(__file__).name, sys.argv[1:])

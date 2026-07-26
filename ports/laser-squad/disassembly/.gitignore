@@ -1,0 +1,6 @@
+.venv/
+
+# Reproducible SkoolKit intermediates and inspection reports. Keep the
+# canonical .ctl, .skool, and .asm files tracked for humans and agents.
+*.z80
+*-info.txt
