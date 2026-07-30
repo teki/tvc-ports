@@ -14,8 +14,8 @@ The command:
 1. acquires the source archive when absent and verifies its ZIP and TAP hashes;
 2. regenerates and hash-checks the TAP description;
 3. builds all port components in a temporary directory;
-4. checks the three patched CAS hashes and compares all 16 scenario CAS
-   payloads with their exact TAP slices; and
+4. checks the three patched CAS hashes and compares all four complete scenario
+   CAS payloads with their exact TAP blocks; and
 5. checks every filename and size in the generated DSK directory.
 
 It leaves no generated build output in the port. On the first run it populates
@@ -54,8 +54,16 @@ runtime loading.
   `2000H-2FFFH` must not be modified by drawing.
 - **Gameplay input:** verify `Q`, `A`, `O`, `P`, and Space through the
   store/tactical control path, not only in menus.
-- **Multi-load:** verify the reconstructed payload at `B621H-FFFFH` matches the
+- **Multi-load:** verify the direct payload at `B621H-FFFFH` matches the
   selected original TAP block.
+
+## Unsplit Multi-load Validation
+
+The direct one-file path was validated in `rtvc` from the clean TVC 1.2
+VT-DOS boot snapshot. The page-0 support routine was called in mode 1 with
+block ID `64H`; it returned through the success path with mapper shadow `B0H`
+and game success flag `00H`. Raw U2/U3 memory at `B621H-FFFFH` matched all
+`49DFH` bytes of `LASERSQD.TAP` block 6.
 
 ## Diagnostic Snapshot Record
 

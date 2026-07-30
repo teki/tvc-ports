@@ -28,9 +28,9 @@ committing the original. Cache downloads locally and fail before extraction
 when either the archive or selected member has the wrong hash.
 
 When a port modifies an original binary payload, derive it from the verified
-source during every build and apply tracked, narrow patches. For split
-transport files, verify that the pieces reconstruct the original payload
-byte-for-byte before relying on container-level checks. The
+source during every build and apply tracked, narrow patches. Verify complete
+transport payloads directly against the original; when splitting is genuinely
+required, also verify that the pieces reconstruct it byte-for-byte. The
 [Laser Squad loading path](../ports/laser-squad/notes.md#current-loading-path)
 is the originating example.
 

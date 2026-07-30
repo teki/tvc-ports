@@ -98,13 +98,14 @@ For TVC output:
 - use CAS when the port is genuinely single-load;
 - use DSK with named CAS-style components when later stages need runtime
   loading; and
-- keep transport splitting in the build script when destination banks cannot
-  be mapped during VT-DOS reads.
+- select the complete destination mapping before a VT-DOS block input. TVC 1.2
+  VT-DOS has been verified writing a single read across U2 and U3.
 
-Verify every split payload against the source block and verify its
-concatenation before testing the runtime loader. See the
+Verify every transported payload against the source block before testing the
+runtime loader. Split only when a tested target or driver genuinely requires
+it, then verify the concatenation as well. See the
 [Laser Squad multi-load path](../ports/laser-squad/notes.md#runtime-multi-load-transport)
-for a verified transport split that leaves the game's contiguous destination
+for a verified direct load that leaves the game's contiguous destination
 unchanged.
 
 ## Validation

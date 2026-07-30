@@ -296,11 +296,9 @@ TVC_GAME_KEYS_DONE:
         LD A,E
         RET
 
-; Replacement for B15CH mode 1: load the selected scenario payload while
-; preserving the original block-ID selection. The first 09DFH bytes go directly
-; to U2 at B621H. The final 4000H bytes are staged through the disposable
-; Spectrum shadow at 4000H in three chunks and copied to U3. All four parts use
-; the same proven page-0 LOAD_BLOCK routine as the initial loader.
+; Replacement for B15CH mode 1: load the selected original 49DFH-byte scenario
+; payload directly across U2/U3 at B621H-FFFFH. The page-0 LOAD_BLOCK routine
+; remains accessible while VT-DOS temporarily obtains its ROM mappings.
 TVC_MULTILOAD:
         CP 01H
         JP NZ,TVC_MULTILOAD_FAIL_RUN ; save/verify modes remain unported
@@ -313,89 +311,29 @@ TVC_MULTILOAD:
         JR Z,TVC_MULTILOAD_66
         CP 68H
         JP NZ,TVC_MULTILOAD_FAIL_RUN
-        LD DE,TVC_BLOCK_68A_NAME_RUN
-        LD HL,TVC_BLOCK_68B_NAME_RUN
-        LD BC,TVC_BLOCK_68C_NAME_RUN
-        LD IX,TVC_BLOCK_68D_NAME_RUN
+        LD DE,TVC_BLOCK_68_NAME_RUN
         JR TVC_MULTILOAD_SELECTED
 TVC_MULTILOAD_64:
-        LD DE,TVC_BLOCK_64A_NAME_RUN
-        LD HL,TVC_BLOCK_64B_NAME_RUN
-        LD BC,TVC_BLOCK_64C_NAME_RUN
-        LD IX,TVC_BLOCK_64D_NAME_RUN
+        LD DE,TVC_BLOCK_64_NAME_RUN
         JR TVC_MULTILOAD_SELECTED
 TVC_MULTILOAD_65:
-        LD DE,TVC_BLOCK_65A_NAME_RUN
-        LD HL,TVC_BLOCK_65B_NAME_RUN
-        LD BC,TVC_BLOCK_65C_NAME_RUN
-        LD IX,TVC_BLOCK_65D_NAME_RUN
+        LD DE,TVC_BLOCK_65_NAME_RUN
         JR TVC_MULTILOAD_SELECTED
 TVC_MULTILOAD_66:
-        LD DE,TVC_BLOCK_66A_NAME_RUN
-        LD HL,TVC_BLOCK_66B_NAME_RUN
-        LD BC,TVC_BLOCK_66C_NAME_RUN
-        LD IX,TVC_BLOCK_66D_NAME_RUN
+        LD DE,TVC_BLOCK_66_NAME_RUN
 
 TVC_MULTILOAD_SELECTED:
-        LD (3030H),HL
-        LD (3032H),BC
-        LD (3034H),IX           ; remember three U3 chunk filenames
         LD A,(0003H)
-        AND 3FH
-        OR 40H
+        AND 1FH
+        OR 0A0H
         LD (0003H),A
-        OUT (02H),A             ; U2 + SYS mapping for page-0 disk loader
-        LD BC,09DFH
+        OUT (02H),A             ; U2 + U3 direct destination mapping
+        LD BC,49DFH
         LD HL,0B621H
         CALL LOAD_BLOCK
         OR A
         JP NZ,TVC_MULTILOAD_FAIL_RUN
-
-        LD DE,(3030H)
-        LD BC,1800H
-        LD HL,0C000H
-        CALL TVC_LOAD_U3_PART_RUN
-        OR A
-        JP NZ,TVC_MULTILOAD_FAIL_RUN
-        LD DE,(3032H)
-        LD BC,1800H
-        LD HL,0D800H
-        CALL TVC_LOAD_U3_PART_RUN
-        OR A
-        JP NZ,TVC_MULTILOAD_FAIL_RUN
-        LD DE,(3034H)
-        LD BC,1000H
-        LD HL,0F000H
-        CALL TVC_LOAD_U3_PART_RUN
-        OR A
-        JP NZ,TVC_MULTILOAD_FAIL_RUN
         LD (0B15BH),A           ; original success flag
-        RET
-
-; Input DE = filename, BC = part size, HL = final U3 destination.
-TVC_LOAD_U3_PART:
-TVC_LOAD_U3_PART_RUN EQU 2000H+TVC_LOAD_U3_PART-TVC_SUPPORT_IMAGE
-        LD (3036H),HL
-        LD (3038H),BC
-        LD A,(0003H)
-        AND 3FH
-        OR 40H
-        LD (0003H),A
-        OUT (02H),A             ; U1/U2/SYS mapping for VT-DOS
-        LD HL,4000H
-        CALL LOAD_BLOCK         ; stage part over obsolete menu shadow
-        OR A
-        RET NZ
-        LD A,(0003H)
-        AND 3FH
-        OR 80H
-        LD (0003H),A
-        OUT (02H),A             ; expose U3 for the final copy
-        LD HL,4000H
-        LD DE,(3036H)
-        LD BC,(3038H)
-        LDIR
-        XOR A
         RET
 
 TVC_MULTILOAD_FAIL:
@@ -411,54 +349,18 @@ TVC_MULTILOAD_FAIL_RUN EQU 2000H+TVC_MULTILOAD_FAIL-TVC_SUPPORT_IMAGE
         LD (0B15BH),A
         RET
 
-TVC_BLOCK_64A_NAME:
-TVC_BLOCK_64A_NAME_RUN EQU 2000H+TVC_BLOCK_64A_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L64A"
-TVC_BLOCK_64B_NAME:
-TVC_BLOCK_64B_NAME_RUN EQU 2000H+TVC_BLOCK_64B_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L64B"
-TVC_BLOCK_64C_NAME:
-TVC_BLOCK_64C_NAME_RUN EQU 2000H+TVC_BLOCK_64C_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L64C"
-TVC_BLOCK_64D_NAME:
-TVC_BLOCK_64D_NAME_RUN EQU 2000H+TVC_BLOCK_64D_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L64D"
-TVC_BLOCK_65A_NAME:
-TVC_BLOCK_65A_NAME_RUN EQU 2000H+TVC_BLOCK_65A_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L65A"
-TVC_BLOCK_65B_NAME:
-TVC_BLOCK_65B_NAME_RUN EQU 2000H+TVC_BLOCK_65B_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L65B"
-TVC_BLOCK_65C_NAME:
-TVC_BLOCK_65C_NAME_RUN EQU 2000H+TVC_BLOCK_65C_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L65C"
-TVC_BLOCK_65D_NAME:
-TVC_BLOCK_65D_NAME_RUN EQU 2000H+TVC_BLOCK_65D_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L65D"
-TVC_BLOCK_66A_NAME:
-TVC_BLOCK_66A_NAME_RUN EQU 2000H+TVC_BLOCK_66A_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L66A"
-TVC_BLOCK_66B_NAME:
-TVC_BLOCK_66B_NAME_RUN EQU 2000H+TVC_BLOCK_66B_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L66B"
-TVC_BLOCK_66C_NAME:
-TVC_BLOCK_66C_NAME_RUN EQU 2000H+TVC_BLOCK_66C_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L66C"
-TVC_BLOCK_66D_NAME:
-TVC_BLOCK_66D_NAME_RUN EQU 2000H+TVC_BLOCK_66D_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L66D"
-TVC_BLOCK_68A_NAME:
-TVC_BLOCK_68A_NAME_RUN EQU 2000H+TVC_BLOCK_68A_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L68A"
-TVC_BLOCK_68B_NAME:
-TVC_BLOCK_68B_NAME_RUN EQU 2000H+TVC_BLOCK_68B_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L68B"
-TVC_BLOCK_68C_NAME:
-TVC_BLOCK_68C_NAME_RUN EQU 2000H+TVC_BLOCK_68C_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L68C"
-TVC_BLOCK_68D_NAME:
-TVC_BLOCK_68D_NAME_RUN EQU 2000H+TVC_BLOCK_68D_NAME-TVC_SUPPORT_IMAGE
-        DB 4,"L68D"
+TVC_BLOCK_64_NAME:
+TVC_BLOCK_64_NAME_RUN EQU 2000H+TVC_BLOCK_64_NAME-TVC_SUPPORT_IMAGE
+        DB 3,"L64"
+TVC_BLOCK_65_NAME:
+TVC_BLOCK_65_NAME_RUN EQU 2000H+TVC_BLOCK_65_NAME-TVC_SUPPORT_IMAGE
+        DB 3,"L65"
+TVC_BLOCK_66_NAME:
+TVC_BLOCK_66_NAME_RUN EQU 2000H+TVC_BLOCK_66_NAME-TVC_SUPPORT_IMAGE
+        DB 3,"L66"
+TVC_BLOCK_68_NAME:
+TVC_BLOCK_68_NAME_RUN EQU 2000H+TVC_BLOCK_68_NAME-TVC_SUPPORT_IMAGE
+        DB 3,"L68"
 
 ; Replacement for the hardware-specific body at 602DH. Preserve the original
 ; Spectrum RAM clear because game code may inspect that screen state, then

@@ -63,8 +63,8 @@ traces, false leads, and exact patches:
   capture the target stack-depth and later-`SP`-assignment checks.
 - [Tape and multi-load games](../../knowledge/zx-spectrum.md#tape-and-multi-load-games)
   and [TVC disk transfer and paging](../../knowledge/tvc.md#disk-transfer-and-paging)
-  describe verified transport splitting without changing the game-visible
-  payload.
+  describe verified direct loading across mapped U2 and U3 without changing
+  the original payload.
 - [Corruption investigation](../../knowledge/tooling.md#corruption-investigation-pattern)
   preserves the reusable snapshot, deterministic input, bounded trace, and
   first-invalid-write workflow.
@@ -108,9 +108,9 @@ This preserves the original Spectrum BASIC structure—load first block, call
 it, load second block, call it—while moving both targeted loads into assembly
 because TVC BASIC cannot load a named file to an explicit address. The second
 stage is now the original `LSCODE` payload with a narrow TVC hardware overlay;
-the DSK maps the first runtime IDs `64H`, `65H`, `66H`, and `68H` to split
-named files. The sequence for the later repeated `68H` TAP blocks remains to
-be verified.
+the DSK maps the first runtime IDs `64H`, `65H`, `66H`, and `68H` to one named
+file each. The sequence for the later repeated `68H` TAP blocks remains to be
+verified.
 
 The standalone [lasersqd_loader.asm](src/lasersqd_loader.asm) shares one
 `LOAD_BLOCK` routine between both stages. Its call sequence is:
@@ -183,10 +183,10 @@ Current files on the image:
 | `LOADER.CAS` | [lasersqd_loader.asm](src/lasersqd_loader.asm) | Autorun BASIC wrapper plus the two-stage assembly disk loader |
 | `LS1.CAS` | [lasersqd_ls_7530_tvc.asm](src/lasersqd_ls_7530_tvc.asm) | Converted first-stage payload loaded to `7530H` |
 | `LS2.CAS` | [lasersqd_lscode_5e28_tvc.asm](src/lasersqd_lscode_5e28_tvc.asm) | Original `LSCODE` payload plus the TVC hardware overlay, loaded to `5E28H` |
-| `L64A`-`L64D` | `LASERSQD.TAP` block 6 | Scenario 1 payload split for page-0 loading and recombined at `B621H-FFFFH` |
-| `L65A`-`L65D` | `LASERSQD.TAP` block 7 | Scenario 2 payload split and recombined unchanged |
-| `L66A`-`L66D` | `LASERSQD.TAP` block 8 | Scenario 3 payload split and recombined unchanged |
-| `L68A`-`L68D` | `LASERSQD.TAP` block 9 | First expansion payload split and recombined unchanged |
+| `L64.CAS` | `LASERSQD.TAP` block 6 | Scenario 1 payload loaded unchanged at `B621H-FFFFH` |
+| `L65.CAS` | `LASERSQD.TAP` block 7 | Scenario 2 payload loaded unchanged at `B621H-FFFFH` |
+| `L66.CAS` | `LASERSQD.TAP` block 8 | Scenario 3 payload loaded unchanged at `B621H-FFFFH` |
+| `L68.CAS` | `LASERSQD.TAP` block 9 | First expansion payload loaded unchanged at `B621H-FFFFH` |
 
 [lasersqd_lscode_5e28_tvc.asm](src/lasersqd_lscode_5e28_tvc.asm) is an overlay, not
 a replacement implementation. The build takes the pristine `5E28H-B620H`
@@ -272,21 +272,19 @@ The original multiload boundary at `B15CH` prepares a `49DFH`-byte payload at
 `B1A0H`. Mode 1 now jumps to the page-0 TVC support while retaining the
 original IDs selected by `B1C3H`: `64H`, `65H`, `66H`, and `68H`.
 
-VT-DOS forces its normal U1/U2/SYS map while transferring, so it cannot write
-the final 16 KiB directly into U3 or into a selected video bank. Each original
-payload is therefore stored on disk as four transport-only pieces: a `09DFH`
-prefix loaded directly to U2 at `B621H`, followed by `1800H`, `1800H`, and
-`1000H` chunks loaded through the obsolete Spectrum shadow at `4000H`. The
-page-0 loader copies each latter chunk to U3 at `C000H`, `D800H`, and `F000H`
-before loading the next. Their concatenation is byte-for-byte the original
-`49DFH` TAP payload; the game still sees one contiguous block at
-`B621H-FFFFH`.
+Each original payload is stored as one named CAS containing its unchanged
+`49DFH` bytes. The page-0 loader maps U2 and U3 together, then block-reads the
+selected file directly across `B621H-FFFFH`.
 
-The initial blocks and all scenario chunks share the assembly `LOAD_BLOCK`
+This replaced an earlier four-file staged transport which had assumed VT-DOS
+could not write beneath its page-3 ROM window. The reusable
+[direct-U3 disk probe](../../knowledge/tvc-disk-u3-read-probe.asm) disproved
+that assumption for TVC 1.2 + VT-DOS.
+
+The initial blocks and scenario payloads share the assembly `LOAD_BLOCK`
 implementation resident in U0. A direct emulator call with mode 1 and ID
-`64H` reached the success return. The reconstructed mapped memory at
-`B621H-FFFFH` was then compared byte-for-byte with original TAP block 6; all
-`49DFH` bytes matched.
+`64H` reached the success return. The mapped memory at `B621H-FFFFH` was then
+compared byte-for-byte with original TAP block 6; all `49DFH` bytes matched.
 
 Known multiload TVC games often use BASIC only for the first program/bootstrap,
 then let machine code perform later loads through ROM cassette routines. The

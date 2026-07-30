@@ -19,13 +19,13 @@ from rtvc import run_tool
 
 
 EXPECTED_PATCHED_CAS = {
-    "LOADER.CAS": ("lasersqd_loader.cas", "7eb6eb206f0b6da6e46d1e530298b892020dd05e293a9e0472f6f2e228e4dcfd"),
+    "LOADER.CAS": ("lasersqd_loader.cas", "5a72bd170564daa801889f2937f890555f0ed8554709eb3e90b4fc3005e46977"),
     "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "3db8073b5e2ec7413b18856a9040327bb72518b2c85513d49d457c9eed7db934"),
-    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "94204e4287fbb549f904d0b09bd83131e11e5e5bade8f291f2e1cbcd1e81e315"),
+    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "4fd2e423390481658450ada791067d1d5d2867bc6886beddda5d6e49b9c2eb5e"),
 }
 
 EXPECTED_PATCHED_SIZES = {
-    "LOADER.CAS": 1593,
+    "LOADER.CAS": 1373,
     "LS1.CAS": 2320,
     "LS2.CAS": 22665,
 }
@@ -34,8 +34,7 @@ EXPECTED_PATCHED_SIZES = {
 def expected_sizes():
     sizes = dict(EXPECTED_PATCHED_SIZES)
     for block_name in laser_build.MULTILOAD_BLOCKS:
-        for suffix, start, end in laser_build.MULTILOAD_PARTS:
-            sizes[f"{block_name}{suffix}.CAS"] = 144 + end - start
+        sizes[f"{block_name}.CAS"] = 144 + 0x49DF
     return sizes
 
 
@@ -76,23 +75,17 @@ def verify():
         scenario_files = 0
         for block_name, block_index in laser_build.MULTILOAD_BLOCKS.items():
             payload = read_tap_block_data(source_tap, block_index)
-            reconstructed = bytearray()
-            for suffix, start, end in laser_build.MULTILOAD_PARTS:
-                disk_name = f"{block_name}{suffix}.CAS"
-                cas = read_tvc_cas(build_dir / disk_name.lower())
-                if cas.file_type != 0 or cas.auto_run:
-                    raise ValueError(f"{disk_name} has unexpected TVC metadata")
-                if cas.load_address != 0x19EF:
-                    raise ValueError(f"{disk_name} has unexpected load address")
-                expected_payload = payload[start:end]
-                if cas.payload != expected_payload:
-                    raise ValueError(
-                        f"{disk_name} does not match TAP block {block_index}"
-                    )
-                reconstructed.extend(cas.payload)
-                scenario_files += 1
-            if reconstructed != payload:
-                raise ValueError(f"{block_name} transport pieces do not reconstruct")
+            disk_name = f"{block_name}.CAS"
+            cas = read_tvc_cas(build_dir / disk_name.lower())
+            if cas.file_type != 0 or cas.auto_run:
+                raise ValueError(f"{disk_name} has unexpected TVC metadata")
+            if cas.load_address != 0x19EF:
+                raise ValueError(f"{disk_name} has unexpected load address")
+            if cas.payload != payload:
+                raise ValueError(
+                    f"{disk_name} does not match TAP block {block_index}"
+                )
+            scenario_files += 1
 
         result = run_tool(
             "rtvc-dsk",

@@ -40,19 +40,22 @@ end-to-end load evidence.
 
 ## Disk Transfer and Paging
 
-VT-DOS uses its normal mapped configuration while transferring data. A loader
-cannot assume that an arbitrary game bank remains mapped at the CPU
-destination. For data intended for a different bank, read into accessible
-transport memory and copy it after restoring a deliberate mapping.
+The TVC 1.2 ROM/VT-DOS block-input path can write directly into U3 at
+`C000H`. Before issuing the device call, select U3 in page 3 and update the
+firmware paging shadow at `0003H`. The device call returns with that requested
+U3 mapping still selected.
 
-This is a software consequence of TVC paging; the hardware mapping rules remain
-authoritative in `rtvc`.
+This was verified with
+[tvc-disk-u3-read-probe.asm](tvc-disk-u3-read-probe.asm): a 32-byte block read
+returned status `00H`, the paging shadow after the call was `B0H`, close
+returned `00H`, and raw U3 at `C000H` matched the source byte-for-byte. The
+result applies to the tested TVC 1.2 and VT-DOS configuration; recheck other
+ROM or disk-driver versions.
 
 The
 [Laser Squad multi-load implementation](../ports/laser-squad/notes.md#runtime-multi-load-transport)
-demonstrates the reusable pattern: read through accessible transport memory,
-restore the intended map, copy into the final bank, and verify the reconstructed
-destination against the source payload.
+uses this direct path to load each original payload across U2 and U3 from one
+CAS file.
 
 ## Interrupt Integration
 
@@ -84,3 +87,15 @@ described above.
 Build and run instructions are kept in the source comments. Treat the observed
 output format as evidence for a specific ROM/VT-DOS configuration, not as a
 replacement for the hardware reference.
+
+## Direct U3 Disk-read Probe
+
+[tvc-disk-u3-read-probe.asm](tvc-disk-u3-read-probe.asm) tests whether the
+normal ROM/VT-DOS block-input path can write directly to U3 at `C000H`. It
+reopens its own CAS as known input, guards the physical U3 destination,
+requests the direct read, remaps U3, and compares the result.
+
+The TVC 1.2 + VT-DOS emulator run returned result `01H`: direct input
+succeeded, the mapper shadow remained `B0H`, and all 32 target bytes matched.
+Build, run, result-address, and border-pattern instructions are kept in the
+source comments.

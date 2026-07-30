@@ -43,12 +43,6 @@ MULTILOAD_BLOCKS = {
     "L66": 8,
     "L68": 9,
 }
-MULTILOAD_PARTS = (
-    ("A", 0x0000, 0x09DF),
-    ("B", 0x09DF, 0x21DF),
-    ("C", 0x21DF, 0x39DF),
-    ("D", 0x39DF, 0x49DF),
-)
 
 
 def run(name, args):
@@ -224,11 +218,10 @@ def build(build_dir, out_dir):
         payload = read_tap_block_data(SOURCES_DIR / "LASERSQD.TAP", block_index)
         if len(payload) != 0x49DF:
             raise ValueError(f"unexpected {block_name} payload size {len(payload):04X}H")
-        for suffix, start, end in MULTILOAD_PARTS:
-            disk_name = f"{block_name}{suffix}.CAS"
-            cas_path = WORK_DIR / disk_name.lower()
-            write_tvc_cas(cas_path, payload[start:end])
-            multiload_cas[disk_name] = cas_path
+        disk_name = f"{block_name}.CAS"
+        cas_path = WORK_DIR / disk_name.lower()
+        write_tvc_cas(cas_path, payload)
+        multiload_cas[disk_name] = cas_path
     if second_block_bin.stat().st_size != second_block_size:
         raise ValueError("patched LSCODE size changed")
 
