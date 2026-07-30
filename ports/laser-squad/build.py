@@ -164,6 +164,7 @@ def loader_support_addresses():
         "TVC_DRAW_NORMAL",
         "TVC_DRAW_DOUBLE",
         "TVC_DRAW_LARGE",
+        "TVC_TOGGLE_CROSS",
     )
     return {
         name: TVC_SUPPORT_ADDR + symbols[name] - source_base

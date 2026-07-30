@@ -246,6 +246,13 @@ are copied to page-0 scratch RAM before page 2 is temporarily switched from U2
 to VID0, then packed into the established GRAPHICS 4 layout. Palette entries
 1-3 represent the startup screen's bright cyan, yellow, and white inks.
 
+The firing cross is not a glyph. The original `8B7AH` routine XORs 21 pixels
+directly into the Spectrum bitmap through `8444H`: the center and offsets 1-5
+along both axes. Its four callers now use a page-0 wrapper that retains those
+original writes and redraws only the character cells intersected by the 11x11
+cross. This keeps the dynamic cross synchronized with VID0 without translating
+the game's general pixel plotter.
+
 For rapid testing, bypass BASIC and the initial disk input: start from the boot
 snapshot with `dist/lasersqd_tvc.dsk` mounted and load
 `build/lasersqd_loader_bootstrap.toml`,

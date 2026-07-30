@@ -56,6 +56,21 @@
         ORG 60AFH
         JP %TVC_DRAW_LARGE%    ; original four-quadrant glyph renderer
 
+        ; The firing cross toggler at 8B7AH XORs pixels directly into the
+        ; Spectrum bitmap. Route its callers through a wrapper that preserves
+        ; that original drawing and refreshes the touched TVC character cells.
+        ORG 624BH
+        CALL %TVC_TOGGLE_CROSS%
+
+        ORG 6253H
+        CALL NZ,%TVC_TOGGLE_CROSS%
+
+        ORG 626AH
+        CALL %TVC_TOGGLE_CROSS%
+
+        ORG 925BH
+        CALL %TVC_TOGGLE_CROSS%
+
         ; B1C3H reloads the selected scenario and then restores the Spectrum
         ; stack before entering the game. Keep the post-multiload stack in U0
         ; too; otherwise the next TVC firmware interrupt overwrites 5Dxx state.

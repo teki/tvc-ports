@@ -936,6 +936,79 @@ TVC_DRAW_LARGE:
         CALL TVC_REDRAW_SHADOW_CELL_RUN
         RET
 
+; The original 8B7AH routine toggles a firing cross by XORing the center pixel
+; and offsets 1-5 along both axes through its direct Spectrum bitmap plotter.
+; Preserve that routine and its return state, then refresh the character cells
+; intersected by the resulting 11x11 bitmap change.
+TVC_TOGGLE_CROSS:
+        CALL 8B7AH
+        PUSH AF
+        PUSH BC
+        PUSH DE
+        PUSH HL
+
+        LD A,(5D12H)           ; horizontal center; plotter adds an 8px margin
+        ADD A,03H              ; left edge: center + 8 - 5
+        RRCA
+        RRCA
+        RRCA
+        AND 1FH
+        LD (3028H),A
+        LD A,(5D12H)
+        ADD A,0DH              ; right edge: center + 8 + 5
+        RRCA
+        RRCA
+        RRCA
+        AND 1FH
+        LD (3029H),A
+
+        LD A,(5D11H)           ; vertical center
+        ADD A,03H              ; top edge: center + 8 - 5
+        RRCA
+        RRCA
+        RRCA
+        AND 1FH
+        LD (302AH),A
+        LD A,(5D11H)
+        ADD A,0DH              ; bottom edge: center + 8 + 5
+        RRCA
+        RRCA
+        RRCA
+        AND 1FH
+        LD (302BH),A
+
+TVC_TOGGLE_CROSS_ROW:
+        LD A,(3028H)
+        LD (302CH),A
+TVC_TOGGLE_CROSS_CELL:
+        LD C,A
+        LD A,(302AH)
+        CALL TVC_REDRAW_SHADOW_CELL_RUN
+        LD A,(302CH)
+        INC A
+        LD (302CH),A
+        LD C,A
+        LD A,(3029H)
+        INC A
+        CP C
+        LD A,(302CH)
+        JR NZ,TVC_TOGGLE_CROSS_CELL
+
+        LD A,(302AH)
+        INC A
+        LD (302AH),A
+        LD C,A
+        LD A,(302BH)
+        INC A
+        CP C
+        JR NZ,TVC_TOGGLE_CROSS_ROW
+
+        POP HL
+        POP DE
+        POP BC
+        POP AF
+        RET
+
 ; Convert a Spectrum bitmap cell address in HL to its attribute address.
 TVC_BITMAP_TO_ATTRIBUTE:
 TVC_BITMAP_TO_ATTRIBUTE_RUN EQU 2000H+TVC_BITMAP_TO_ATTRIBUTE-TVC_SUPPORT_IMAGE

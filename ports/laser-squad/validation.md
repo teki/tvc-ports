@@ -78,6 +78,9 @@ runtime loading.
   `2000H-2FFFH` must not be modified by drawing.
 - **Gameplay input:** verify `Q`, `A`, `O`, `P`, and Space through the
   store/tactical control path, not only in menus.
+- **Firing crosshair:** from `lsql-fire.rtvcsnap.zip`, move or blink the firing
+  cursor. Its original 21-pixel XOR cross must appear in cyan at the target
+  position, and toggling it must not recolor or damage the trajectory circles.
 - **Multi-load:** verify the direct payload at `B621H-FFFFH` matches the
   selected original TAP block.
 
