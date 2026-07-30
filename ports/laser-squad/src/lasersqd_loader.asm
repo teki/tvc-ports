@@ -29,10 +29,15 @@
         CALL LOAD_BLOCK
         JR NZ,LOADER_DONE
 
-        LD HL,TVC_SUPPORT_IMAGE
-        LD DE,2000H
+        ; The support source now overlaps its 2000H destination. Copy from the
+        ; end so the relocation cannot overwrite source bytes still to read.
+        LD HL,TVC_SUPPORT_IMAGE_END
+        DEC HL
+        LD DE,2000H+TVC_SUPPORT_IMAGE_END-TVC_SUPPORT_IMAGE
+        DEC DE
         LD BC,TVC_SUPPORT_IMAGE_END-TVC_SUPPORT_IMAGE
-        LDIR
+TVC_SUPPORT_COPY_DIRECTION:
+        LDDR
         CALL 5E28H
 
 LOADER_DONE:
@@ -511,80 +516,6 @@ TVC_CLEAR_SCREEN:
         POP AF                 ; original clear preserved its input attribute
         RET
 
-; Store one Spectrum bitmap byte as two GRAPHICS 4 bytes. Set source bits use
-; the scratch ink slot; cleared bits use the scratch paper slot.
-TVC_PACK_STORE_ROW:
-TVC_PACK_STORE_ROW_RUN EQU 2000H+TVC_PACK_STORE_ROW-TVC_SUPPORT_IMAGE
-        PUSH AF
-        AND F0H
-        CALL TVC_ENCODE_NIBBLE_RUN
-        LD (DE),A
-        INC DE
-        POP AF
-        AND 0FH
-        RLCA
-        RLCA
-        RLCA
-        RLCA
-        CALL TVC_ENCODE_NIBBLE_RUN
-        LD (DE),A
-        INC DE
-        RET
-
-; Input: A contains four source bits in bits 7-4. Output: one GRAPHICS 4 byte
-; combining the active ink and paper slots.
-TVC_ENCODE_NIBBLE:
-TVC_ENCODE_NIBBLE_RUN EQU 2000H+TVC_ENCODE_NIBBLE-TVC_SUPPORT_IMAGE
-        LD C,A
-        LD A,(3020H)
-        CALL TVC_ENCODE_SLOT_RUN
-        PUSH AF
-        LD A,C
-        CPL
-        AND F0H
-        LD C,A
-        LD A,(3021H)
-        CALL TVC_ENCODE_SLOT_RUN
-        LD C,A
-        POP AF
-        OR C
-        RET
-
-; Input: C contains the high-nibble pixel mask and A is palette slot 0-3.
-; Output: A contains the GRAPHICS 4 bits for that mask and slot.
-TVC_ENCODE_SLOT:
-TVC_ENCODE_SLOT_RUN EQU 2000H+TVC_ENCODE_SLOT-TVC_SUPPORT_IMAGE
-        OR A
-        JR Z,TVC_ENCODE_BLACK
-        DEC A
-        JR Z,TVC_ENCODE_ONE
-        DEC A
-        JR Z,TVC_ENCODE_TWO
-        LD A,C                 ; palette 3: set both split pixel bits
-        AND F0H
-        LD C,A
-        RRCA
-        RRCA
-        RRCA
-        RRCA
-        OR C
-        RET
-TVC_ENCODE_TWO:
-        LD A,C                 ; palette 2: low-nibble pixel bits
-        RRCA
-        RRCA
-        RRCA
-        RRCA
-        AND 0FH
-        RET
-TVC_ENCODE_ONE:
-        LD A,C                 ; palette 1: high-nibble pixel bits
-        AND F0H
-        RET
-TVC_ENCODE_BLACK:
-        XOR A
-        RET
-
 ; Input A is a Spectrum attribute. Select GRAPHICS 4 slots for both ink and
 ; paper through the active profile's eight-entry color map. This preserves
 ; reverse-video attributes such as 70H (black ink on bright-yellow paper).
@@ -701,6 +632,17 @@ TVC_REDRAW_SHADOW_CELL_RUN EQU 2000H+TVC_REDRAW_SHADOW_CELL-TVC_SUPPORT_IMAGE
         LD H,A
         LD A,(HL)              ; canonical shadow attribute
         CALL TVC_SELECT_INK_RUN
+        LD A,(3020H)           ; packing-table bits 7-6: ink slot
+        RRCA
+        RRCA
+        LD C,A
+        LD A,(3021H)           ; packing-table bits 5-4: paper slot
+        RLCA
+        RLCA
+        RLCA
+        RLCA
+        OR C
+        LD (302DH),A
         LD A,(0003H)
         PUSH AF
         AND 0DFH               ; selected video RAM in page 2
@@ -714,10 +656,33 @@ TVC_REDRAW_SHADOW_CELL_RUN EQU 2000H+TVC_REDRAW_SHADOW_CELL-TVC_SUPPORT_IMAGE
         ADD A,80H
         LD D,A                 ; character row to TVC raster page
         LD HL,(3022H)
+        LD A,(302DH)
+        LD C,A                 ; packing-table ink/paper prefix
         LD B,08H
 TVC_REDRAW_SHADOW_ROW:
         LD A,(HL)
-        CALL TVC_PACK_STORE_ROW_RUN
+        PUSH HL
+        PUSH AF
+        RRCA
+        RRCA
+        RRCA
+        RRCA
+        AND 0FH                ; high source nibble
+        OR C
+        LD L,A
+        LD H,26H               ; page-aligned TVC_PACK_NIBBLE_TABLE_RUN
+        LD A,(HL)
+        LD (DE),A
+        INC DE
+        POP AF
+        AND 0FH                ; low source nibble
+        OR C
+        LD L,A
+        LD H,26H
+        LD A,(HL)
+        LD (DE),A
+        INC DE
+        POP HL
         DEC DE
         DEC DE
         LD A,E
@@ -1021,4 +986,28 @@ TVC_BITMAP_TO_ATTRIBUTE_RUN EQU 2000H+TVC_BITMAP_TO_ATTRIBUTE-TVC_SUPPORT_IMAGE
         OR 58H
         LD H,A
         RET
+
+; Runtime address 2600H is deliberate: the high byte can be loaded directly
+; in the eight-row hot loop. The index is ink*64 + paper*16 + source nibble.
+; Each byte contains four GRAPHICS 4 pixels with source-one pixels using ink
+; and source-zero pixels using paper.
+        DEFS TVC_SUPPORT_IMAGE+0600H-$
+TVC_PACK_NIBBLE_TABLE:
+TVC_PACK_NIBBLE_TABLE_RUN EQU 2000H+TVC_PACK_NIBBLE_TABLE-TVC_SUPPORT_IMAGE
+        DB 00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H ; ink 0, paper 0
+        DB F0H,E0H,D0H,C0H,B0H,A0H,90H,80H,70H,60H,50H,40H,30H,20H,10H,00H ; ink 0, paper 1
+        DB 0FH,0EH,0DH,0CH,0BH,0AH,09H,08H,07H,06H,05H,04H,03H,02H,01H,00H ; ink 0, paper 2
+        DB FFH,EEH,DDH,CCH,BBH,AAH,99H,88H,77H,66H,55H,44H,33H,22H,11H,00H ; ink 0, paper 3
+        DB 00H,10H,20H,30H,40H,50H,60H,70H,80H,90H,A0H,B0H,C0H,D0H,E0H,F0H ; ink 1, paper 0
+        DB F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H ; ink 1, paper 1
+        DB 0FH,1EH,2DH,3CH,4BH,5AH,69H,78H,87H,96H,A5H,B4H,C3H,D2H,E1H,F0H ; ink 1, paper 2
+        DB FFH,FEH,FDH,FCH,FBH,FAH,F9H,F8H,F7H,F6H,F5H,F4H,F3H,F2H,F1H,F0H ; ink 1, paper 3
+        DB 00H,01H,02H,03H,04H,05H,06H,07H,08H,09H,0AH,0BH,0CH,0DH,0EH,0FH ; ink 2, paper 0
+        DB F0H,E1H,D2H,C3H,B4H,A5H,96H,87H,78H,69H,5AH,4BH,3CH,2DH,1EH,0FH ; ink 2, paper 1
+        DB 0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH ; ink 2, paper 2
+        DB FFH,EFH,DFH,CFH,BFH,AFH,9FH,8FH,7FH,6FH,5FH,4FH,3FH,2FH,1FH,0FH ; ink 2, paper 3
+        DB 00H,11H,22H,33H,44H,55H,66H,77H,88H,99H,AAH,BBH,CCH,DDH,EEH,FFH ; ink 3, paper 0
+        DB F0H,F1H,F2H,F3H,F4H,F5H,F6H,F7H,F8H,F9H,FAH,FBH,FCH,FDH,FEH,FFH ; ink 3, paper 1
+        DB 0FH,1FH,2FH,3FH,4FH,5FH,6FH,7FH,8FH,9FH,AFH,BFH,CFH,DFH,EFH,FFH ; ink 3, paper 2
+        DB FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH ; ink 3, paper 3
 TVC_SUPPORT_IMAGE_END:

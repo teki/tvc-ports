@@ -19,6 +19,7 @@ The decisive failures found during the working-port investigation were:
 | Numeric input stopped at menus or displayed a number without advancing | Laser Squad used several input contracts: its own numeric row scanner, Spectrum ROM `KEY-SCAN` for release/selection, and later a different gameplay handler | Patch every caller path and preserve the return value expected by each one |
 | Ink-4 prompt text was invisible | Spectrum ink 4 fell through an incomplete lookup table to TVC palette index 0 (black) | Map ink 4 explicitly to the user-selected bright cyan and map unsupported visible inks to visible fallbacks |
 | Shopping-screen drawing intermittently filled the display with data and the CPU later went rogue | The TVC firmware interrupt handler used more stack than Spectrum IM 1; with `SP=5E39H` it overwrote game coordinates, which then redirected drawing into the support code | Move the stack to safe U0 RAM at `4000H` and patch both the initial and post-multiload stack assignments |
+| Loading screen worked but later screens were corrupt after adding the packing table | The enlarged support source at `1AB2H-21B1H` overlapped its `2000H-26FFH` runtime destination; forward `LDIR` overwrote source bytes before reading them | Relocate the support image backward with `LDDR` and reject an overlapping forward copy during the build |
 | Gameplay controls did not react after the menus worked | The store/tactical handler at `B136H` read ULA rows directly and returned a packed active-low action byte; it did not use the translated ROM scan path | Add a separate TVC scanner preserving bits 0-4 for Space, Q, A, P, and O |
 
 The intermittent drawing failure initially looked like an interrupt mapper
@@ -653,6 +654,24 @@ Previously ink 4 fell through to palette index 0, making text such as
 profile's four-entry palette use deliberate visible fallbacks rather than
 black.
 
+The compatibility renderer now computes the selected ink/paper prefix once
+per character cell and expands each source nibble through a page-aligned
+256-byte table at `2600H`. This replaces the former nested nibble and
+palette-slot calls without changing the shadow-screen, inverse-paper, palette,
+or mapped-color collision rules. In `rtvc`, a representative
+`TVC_REDRAW_SHADOW_CELL` call from `lsql-fire.rtvcsnap.zip` fell from 5,926 to
+2,414 Z80 cycles, a 2.46-times speedup. The build validates all 256 table
+entries against the GRAPHICS 4 split-plane encoding.
+
+Adding the table grew the loader's embedded support source across its runtime
+destination: source `1AB2H-21B1H` and destination `2000H-26FFH`. The original
+forward `LDIR` therefore copied correctly only until its destination caught
+its source, then replicated already-overwritten bytes into the later drawing
+support. This explains why the separately loaded title screen remained good
+while subsequent screens were corrupt. Startup now initializes `HL` and `DE`
+to the ends of those ranges and uses `LDDR`; the build checks the relocation
+opcode whenever the ranges overlap.
+
 ### TVC interrupt stack isolation
 
 The Spectrum program originally starts with `SP=5E39H`, immediately above its
@@ -672,7 +691,7 @@ The second assignment is essential: without it, loading the selected scenario
 silently restored the unsafe Spectrum stack even though the TVC entry had used
 U0. U0 stays mapped in page 0 in both the game mapping and the firmware
 interrupt mapping, and the stack remains clear of the support image and its
-`3000H-3027H` scratch area. Replays of the pre-store snapshot with the active
+`3000H-302DH` scratch area. Replays of the pre-store snapshot with the active
 stack relocated there ran one million instructions and produced a coherent
 store screen without the self-corruption.
 

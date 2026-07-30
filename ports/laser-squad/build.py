@@ -176,8 +176,47 @@ def write_loader_support_toml():
     document = parse_rtvc_toml(LOADER_BOOTSTRAP_TOML)
     symbols = document["symbols"]
     segment = document["segments"][0]
+    source_base = symbols["TVC_SUPPORT_IMAGE"]
+    source_end = symbols["TVC_SUPPORT_IMAGE_END"]
+    copy_direction = symbols["TVC_SUPPORT_COPY_DIRECTION"] - segment["addr"]
+    if source_base < TVC_SUPPORT_ADDR < source_end:
+        instruction = bytes(segment["bytes"][copy_direction:copy_direction + 2])
+        if instruction != b"\xED\xB8":
+            raise ValueError(
+                "overlapping TVC support relocation must use backward LDDR"
+            )
+    pack_table = TVC_SUPPORT_ADDR + symbols["TVC_PACK_NIBBLE_TABLE"] - source_base
+    if pack_table != 0x2600:
+        raise ValueError(
+            f"TVC packing table moved to {pack_table:04X}H; expected 2600H"
+        )
+    table_start = symbols["TVC_PACK_NIBBLE_TABLE"] - segment["addr"]
+    actual_table = bytes(segment["bytes"][table_start:table_start + 0x100])
+    expected_table = bytearray()
+    for ink in range(4):
+        for paper in range(4):
+            for nibble in range(16):
+                mask = nibble << 4
+                inverse = (~mask) & 0xF0
+                packed = 0
+                if ink & 1:
+                    packed |= mask
+                if ink & 2:
+                    packed |= mask >> 4
+                if paper & 1:
+                    packed |= inverse
+                if paper & 2:
+                    packed |= inverse >> 4
+                expected_table.append(packed)
+    if actual_table != expected_table:
+        raise ValueError("TVC nibble packing table does not match slot encoding")
     start = symbols["TVC_SUPPORT_IMAGE"] - segment["addr"]
     end = symbols["TVC_SUPPORT_IMAGE_END"] - segment["addr"]
+    runtime_end = TVC_SUPPORT_ADDR + symbols["TVC_SUPPORT_IMAGE_END"] - source_base
+    if runtime_end > 0x3000:
+        raise ValueError(
+            f"TVC support overlaps scratch RAM: end {runtime_end:04X}H"
+        )
     write_single_segment(
         TVC_SUPPORT_TOML,
         "relocated TVC_SUPPORT_IMAGE from src/lasersqd_loader.asm",

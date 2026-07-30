@@ -81,6 +81,16 @@ runtime loading.
 - **Firing crosshair:** from `lsql-fire.rtvcsnap.zip`, move or blink the firing
   cursor. Its original 21-pixel XOR cross must appear in cyan at the target
   position, and toggling it must not recolor or damage the trajectory circles.
+- **Drawing performance:** with `lsql-fire.rtvcsnap.zip`, a representative
+  row-9, column-15 `TVC_REDRAW_SHADOW_CELL` call takes 2,414 emulated Z80
+  cycles. The pre-table baseline was 5,926 cycles. Recheck this benchmark when
+  modifying the compatibility packer, and confirm the firing cross and yellow
+  trajectory circles retain their colors.
+- **Support relocation:** the embedded support source overlaps its `2000H`
+  destination after adding the table. The loader must use `LDDR`, and the
+  installed `2000H-26FFH` image must match the generated support TOML before
+  entering the main game. The corrected loader passed this 1,792-byte
+  comparison in `rtvc`, then rendered the scenario-selection screen cleanly.
 - **Multi-load:** verify the direct payload at `B621H-FFFFH` matches the
   selected original TAP block.
 
