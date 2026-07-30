@@ -239,6 +239,68 @@ TVC_KEY_SCAN_6:
         LD E,03H
         RET
 
+; B0ADH originally calls the common screen clear before drawing the control
+; selector. Select its cyan palette profile first, then tail-call the original
+; clear entry so its return still goes directly to B0B0H.
+TVC_CONTROLS_SCREEN_CLEAR:
+        XOR A
+        LD (TVC_PALETTE_ID_RUN),A
+        JP 602CH
+
+; B0C3H originally stores the selected control method and returns. Preserve
+; that state and A, but select the normal-game green profile for the next
+; screen clear. Deferring the hardware write avoids recoloring the control
+; screen between the key press and its replacement.
+TVC_CONTROLS_SELECTED:
+        LD (0B0C7H),A
+        PUSH AF
+        LD A,01H
+        LD (TVC_PALETTE_ID_RUN),A
+        POP AF
+        RET
+
+; The team/armour setup routine begins at 9D55H with a common screen clear.
+; Select its dedicated green/cyan/yellow profile before tail-calling that clear.
+TVC_TEAM_SETUP_CLEAR:
+        LD A,02H
+        LD (TVC_PALETTE_ID_RUN),A
+        JP 602CH
+
+; Replacement for the original 693FH-6942H attribute-store sequence used by
+; the selection highlighter. Preserve OR 40H, the shadow write, registers,
+; flags, and the final HL increment, while also redrawing that character cell.
+TVC_STORE_ATTRIBUTE_AND_REDRAW:
+        OR 40H
+        LD (HL),A
+        PUSH AF
+        PUSH BC
+        PUSH DE
+        PUSH HL
+        LD A,L
+        AND 1FH
+        LD C,A                  ; attribute column
+        LD A,H
+        SUB 58H
+        ADD A,A
+        ADD A,A
+        ADD A,A
+        LD D,A                  ; attribute row bits 3-4
+        LD A,L
+        RRCA
+        RRCA
+        RRCA
+        RRCA
+        RRCA
+        AND 07H
+        OR D                    ; complete attribute row 0-23
+        CALL TVC_REDRAW_SHADOW_CELL_RUN
+        POP HL
+        POP DE
+        POP BC
+        POP AF
+        INC HL
+        RET
+
 ; Replacement for the selected keyboard-control handler at B136H. Preserve
 ; its active-low action byte: bit 0 Space, bit 1 Q, bit 2 A, bit 3 P, bit 4 O.
 ; The original body reads Spectrum rows FDH, FBH, DFH, and 7FH from port FEH;
@@ -362,9 +424,41 @@ TVC_BLOCK_68_NAME:
 TVC_BLOCK_68_NAME_RUN EQU 2000H+TVC_BLOCK_68_NAME-TVC_SUPPORT_IMAGE
         DB 3,"L68"
 
+; Palette profiles contain the four values written to ports 60H-63H.
+; A selects the zero-based profile. Add new four-byte profiles here and select
+; them through TVC_PALETTE_ID_RUN at the appropriate game transition.
+TVC_APPLY_PALETTE:
+TVC_APPLY_PALETTE_RUN EQU 2000H+TVC_APPLY_PALETTE-TVC_SUPPORT_IMAGE
+        ADD A,A
+        ADD A,A
+        LD E,A
+        LD D,00H
+        LD HL,TVC_PALETTES_RUN
+        ADD HL,DE
+        LD BC,0060H
+        LD E,04H
+TVC_APPLY_PALETTE_NEXT:
+        LD A,(HL)
+        OUT (C),A
+        INC HL
+        INC C
+        DEC E
+        JR NZ,TVC_APPLY_PALETTE_NEXT
+        RET
+
+TVC_PALETTES:
+TVC_PALETTES_RUN EQU 2000H+TVC_PALETTES-TVC_SUPPORT_IMAGE
+        DB 00H,51H,54H,44H    ; profile 0: controls, black/cyan/yellow/red
+        DB 00H,50H,54H,44H    ; profile 1: game, black/green/yellow/red
+        DB 00H,50H,51H,54H    ; profile 2: team, black/green/cyan/yellow
+
+TVC_PALETTE_ID:
+TVC_PALETTE_ID_RUN EQU 2000H+TVC_PALETTE_ID-TVC_SUPPORT_IMAGE
+        DB 00H                 ; start with the control-screen profile
+
 ; Replacement for the hardware-specific body at 602DH. Preserve the original
 ; Spectrum RAM clear because game code may inspect that screen state, then
-; clear VID0 and establish the four colors used by the early game screens.
+; clear VID0 and apply the palette profile selected for the current game phase.
 TVC_CLEAR_SCREEN:
         PUSH AF
         LD HL,5AFFH
@@ -397,19 +491,13 @@ TVC_CLEAR_SCREEN:
         POP AF
         LD (0003H),A
         OUT (02H),A             ; restore U2 while leaving U3 mapped
-        XOR A
-        OUT (60H),A            ; palette 0: black
-        LD A,50H
-        OUT (61H),A            ; palette 1: bright green (Spectrum ink 4)
-        LD A,54H
-        OUT (62H),A            ; palette 2: bright yellow (Spectrum ink 6)
-        LD A,44H
-        OUT (63H),A            ; palette 3: bright red (Spectrum ink 2)
+        LD A,(TVC_PALETTE_ID_RUN)
+        CALL TVC_APPLY_PALETTE_RUN
         POP AF                 ; original clear preserved its input attribute
         RET
 
-; Store one Spectrum bitmap byte as two GRAPHICS 4 bytes. The menu uses bright
-; green, yellow, and red; the scratch ink index selects their fixed palette slots.
+; Store one Spectrum bitmap byte as two GRAPHICS 4 bytes. Set source bits use
+; the scratch ink slot; cleared bits use the scratch paper slot.
 TVC_PACK_STORE_ROW:
 TVC_PACK_STORE_ROW_RUN EQU 2000H+TVC_PACK_STORE_ROW-TVC_SUPPORT_IMAGE
         PUSH AF
@@ -428,11 +516,29 @@ TVC_PACK_STORE_ROW_RUN EQU 2000H+TVC_PACK_STORE_ROW-TVC_SUPPORT_IMAGE
         INC DE
         RET
 
-; Input: A contains four source bits in bits 7-4. Output: one GRAPHICS 4 byte.
+; Input: A contains four source bits in bits 7-4. Output: one GRAPHICS 4 byte
+; combining the active ink and paper slots.
 TVC_ENCODE_NIBBLE:
 TVC_ENCODE_NIBBLE_RUN EQU 2000H+TVC_ENCODE_NIBBLE-TVC_SUPPORT_IMAGE
         LD C,A
         LD A,(3020H)
+        CALL TVC_ENCODE_SLOT_RUN
+        PUSH AF
+        LD A,C
+        CPL
+        AND F0H
+        LD C,A
+        LD A,(3021H)
+        CALL TVC_ENCODE_SLOT_RUN
+        LD C,A
+        POP AF
+        OR C
+        RET
+
+; Input: C contains the high-nibble pixel mask and A is palette slot 0-3.
+; Output: A contains the GRAPHICS 4 bits for that mask and slot.
+TVC_ENCODE_SLOT:
+TVC_ENCODE_SLOT_RUN EQU 2000H+TVC_ENCODE_SLOT-TVC_SUPPORT_IMAGE
         OR A
         JR Z,TVC_ENCODE_BLACK
         DEC A
@@ -464,22 +570,54 @@ TVC_ENCODE_BLACK:
         XOR A
         RET
 
-; Input A is a Spectrum attribute. Select the closest fixed GRAPHICS 4 palette
-; slot. Green, red, and yellow are exact; colors unavailable in the four-entry
-; palette remain visible through a nearby fallback instead of becoming black.
+; Input A is a Spectrum attribute. Select GRAPHICS 4 slots for both ink and
+; paper through the active profile's eight-entry color map. This preserves
+; reverse-video attributes such as 70H (black ink on bright-yellow paper).
 TVC_SELECT_INK:
 TVC_SELECT_INK_RUN EQU 2000H+TVC_SELECT_INK-TVC_SUPPORT_IMAGE
+        PUSH AF
         AND 07H
+        CALL TVC_MAP_COLOR_RUN
+        LD (3020H),A
+        POP AF
+        RRCA
+        RRCA
+        RRCA
+        AND 07H
+        CALL TVC_MAP_COLOR_RUN
+        LD (3021H),A
+        OR A
+        RET Z                   ; black paper needs no collision fallback
+        LD C,A
+        LD A,(3020H)
+        CP C
+        RET NZ
+        XOR A
+        LD (3020H),A            ; same non-black slot: use black ink
+        RET
+
+; Input A is a Spectrum color index 0-7. Output A is the active profile's
+; GRAPHICS 4 palette slot.
+TVC_MAP_COLOR:
+TVC_MAP_COLOR_RUN EQU 2000H+TVC_MAP_COLOR-TVC_SUPPORT_IMAGE
+        LD E,A
+        LD A,(TVC_PALETTE_ID_RUN)
+        ADD A,A
+        ADD A,A
+        ADD A,A
+        ADD A,E
         LD E,A
         LD D,00H
-        LD HL,TVC_INK_PALETTE_MAP_RUN
+        LD HL,TVC_INK_PALETTE_MAPS_RUN
         ADD HL,DE
         LD A,(HL)
-        LD (3020H),A
         RET
-TVC_INK_PALETTE_MAP:
-TVC_INK_PALETTE_MAP_RUN EQU 2000H+TVC_INK_PALETTE_MAP-TVC_SUPPORT_IMAGE
-        DB 00H,01H,03H,03H,01H,01H,02H,02H
+TVC_INK_PALETTE_MAPS:
+TVC_INK_PALETTE_MAPS_RUN EQU 2000H+TVC_INK_PALETTE_MAPS-TVC_SUPPORT_IMAGE
+        ; Spectrum inks: black, blue, red, magenta, green, cyan, yellow, white
+        DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 0: cyan/yellow/red
+        DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 1: green/yellow/red
+        DB 00H,02H,03H,02H,01H,02H,03H,02H ; profile 2: white -> cyan
 
 ; Input A = Spectrum character row, C = byte column. Output HL is the original
 ; Spectrum bitmap address for the top raster of that cell. The original row

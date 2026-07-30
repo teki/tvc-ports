@@ -17,7 +17,7 @@ The decisive failures found during the working-port investigation were:
 | Symptom | Root cause | Implemented fix |
 | --- | --- | --- |
 | Numeric input stopped at menus or displayed a number without advancing | Laser Squad used several input contracts: its own numeric row scanner, Spectrum ROM `KEY-SCAN` for release/selection, and later a different gameplay handler | Patch every caller path and preserve the return value expected by each one |
-| Green prompt text was invisible | Spectrum ink 4 fell through an incomplete lookup table to TVC palette index 0 (black) | Map ink 4 explicitly to bright green and map unsupported visible inks to visible fallbacks |
+| Ink-4 prompt text was invisible | Spectrum ink 4 fell through an incomplete lookup table to TVC palette index 0 (black) | Map ink 4 explicitly to the user-selected bright cyan and map unsupported visible inks to visible fallbacks |
 | Shopping-screen drawing intermittently filled the display with data and the CPU later went rogue | The TVC firmware interrupt handler used more stack than Spectrum IM 1; with `SP=5E39H` it overwrote game coordinates, which then redirected drawing into the support code | Move the stack to safe U0 RAM at `4000H` and patch both the initial and post-multiload stack assignments |
 | Gameplay controls did not react after the menus worked | The store/tactical handler at `B136H` read ULA rows directly and returned a packed active-low action byte; it did not use the translated ROM scan path | Add a separate TVC scanner preserving bits 0-4 for Space, Q, A, P, and O |
 
@@ -578,12 +578,55 @@ strategy. Once the relevant graphics are deliberately converted to native
 four-color data, those converted paths no longer require Spectrum attribute
 recombination.
 
-The later main-game compatibility renderer uses a fixed black, green, yellow,
-and red GRAPHICS 4 palette. Its eight-entry Spectrum-ink lookup maps ink 4 to
-green exactly; previously ink 4 fell through to palette index 0, making green
-text such as `(PRESS 1 OR 2)` disappear against the black background. Colors
-that are not present in the four-entry palette now use visible fallbacks rather
-than black.
+The later main-game compatibility renderer selects its GRAPHICS 4 colors from
+a table of four-byte palette profiles. Profile 0 is black, bright cyan, yellow,
+and red for the control-selection screen; profile 1 is black, bright green,
+yellow, and red for subsequent screens; and profile 2 is black, bright green,
+bright cyan, and yellow for team/armour setup. The common clear routine applies
+the currently selected profile to ports `60H-63H`, so additional game-phase
+palettes can be added without duplicating the hardware writes.
+
+The `B0ADH` control-screen entry selects profile 0 before its clear. At the
+shared `B0C3H` exit, a narrow compatibility call preserves and stores the
+selected method and selects profile 1 without immediately changing the visible
+screen. The next screen clear applies bright green, avoiding both the
+control-screen recolor and the next screen reverting to cyan.
+
+Each palette profile also has an eight-entry Spectrum-ink-to-slot map. Profile
+2 keeps source green, cyan, and yellow distinct and deliberately maps Spectrum
+white to the bright-cyan slot. The supplied `lsq-lvlsel.rtvcsnap.zip` trace
+showed that pressing `1` reaches the team/armour setup clear through `9D55H`;
+that entry now selects profile 2 before the shared clear.
+
+The renderer maps both halves of each Spectrum attribute through the active
+profile: bitmap bits set to one use the ink slot, while cleared bits use the
+paper slot. The supplied team-setup shadow contained `70H` on the selected
+soldier name—black ink on bright-yellow paper. Earlier TVC packing masked the
+attribute with `07H` and forced every cleared pixel to black, losing that
+reverse-video highlight. The two-slot packer now reproduces it without adding
+a game-specific inverse flag.
+
+The initial two-slot change exposed a second boundary: the selection
+highlighter at `6918H` updates a two-row by eight-column attribute region
+directly. Its store at `6941H` changed the Spectrum shadow to `70H`, but did
+not redraw the already-rendered TVC cell, so the visible selection remained
+yellow-on-black. The overlay now replaces the four-byte
+`OR 40H`/store/increment sequence at `693FH-6942H` with a compatibility call.
+It preserves the original transformation and register/flag result, writes the
+shadow attribute, converts that attribute address back to a row and column,
+redraws the cell, and performs the original `HL` increment.
+
+The completed weapon-selection banner uses Spectrum cyan ink on blue paper.
+Profile 2 maps both source colors to its bright-cyan slot, initially producing
+cyan-on-cyan. The attribute mapper now detects when ink and a non-black paper
+collapse onto the same TVC slot and changes only the ink fallback to black.
+This produces high-contrast black-on-cyan for the banner without changing
+ordinary cyan weapon graphics drawn on black.
+
+Previously ink 4 fell through to palette index 0, making text such as
+`(PRESS 1 OR 2)` disappear against the black background. Colors absent from a
+profile's four-entry palette use deliberate visible fallbacks rather than
+black.
 
 ### TVC interrupt stack isolation
 

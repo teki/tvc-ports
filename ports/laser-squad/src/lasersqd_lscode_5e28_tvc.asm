@@ -19,6 +19,15 @@
         ORG 0A290H
         CALL %TVC_KEY_SCAN%    ; replace Spectrum ROM KEY-SCAN at 028EH
 
+        ORG 0B0ADH
+        CALL %TVC_CONTROLS_SCREEN_CLEAR% ; select cyan profile, then clear
+
+        ORG 0B0C3H
+        CALL %TVC_CONTROLS_SELECTED% ; store method, select normal-game profile
+
+        ORG 9D55H
+        CALL %TVC_TEAM_SETUP_CLEAR% ; select team palette before its clear
+
         ORG 0B15CH
         JP %TVC_MULTILOAD%     ; preserve selector, replace tape transport
 
@@ -30,6 +39,13 @@
 
         ORG 64F7H
         JP %TVC_DRAW_DOUBLE%   ; original double-height text renderer
+
+        ; The original selection highlighter transforms and stores attributes
+        ; directly. Preserve the transform through OR C, then replace its
+        ; OR 40H / store / increment sequence with a shadow-aware TVC write.
+        ORG 693FH
+        CALL %TVC_STORE_ATTRIBUTE_AND_REDRAW%
+        NOP
 
         ORG 60AFH
         JP %TVC_DRAW_LARGE%    ; original four-quadrant glyph renderer

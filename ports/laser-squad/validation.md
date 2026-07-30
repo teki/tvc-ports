@@ -45,8 +45,23 @@ runtime loading.
 
 ## Focused Regression Checks
 
-- **Palette:** `(PRESS 1 OR 2)` and other Spectrum ink-4 text must be visibly
-  green, never black. Unsupported visible inks must remain visible.
+- **Palette:** `(PRESS 1 OR 2)` and the control-selection screen must use
+  bright cyan for Spectrum ink 4 without changing color after the key press.
+  The following screen clear must apply bright green and retain the normal-game
+  palette on later clears. Re-entering control selection must select cyan
+  again. Unsupported visible inks must remain visible.
+- **Team/armour palette:** from `lsq-lvlsel.rtvcsnap.zip`, press `1`. The
+  `9D55H` team-setup clear must select black/green/cyan/yellow. Spectrum green,
+  cyan, and yellow must remain distinct; Spectrum white may use bright cyan.
+- **Paper/inverse rendering:** the selected soldier name has Spectrum
+  attribute `70H` and must render as black text on a bright-yellow background,
+  not yellow text on black. Ordinary attributes with paper 0 must retain their
+  black backgrounds. Move the current-person selection in both directions;
+  the old and new two-row highlights must redraw immediately.
+- **Mapped-color collision:** after weapon selection is completed, the
+  Spectrum cyan-on-blue `PRESS FIRE TO END SELECTION` banner maps to
+  black-on-cyan, never cyan-on-cyan. Cyan weapon graphics on black must remain
+  cyan.
 - **Numeric input:** press and release `1` and `2`; both the release loop and
   selection call must advance.
 - **Interrupt/drawing:** allow the shopping screen to draw with interrupts
