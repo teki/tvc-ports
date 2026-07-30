@@ -7,6 +7,9 @@
         ORG 5E28H
         JP %TVC_MAIN_ENTRY%    ; map the game's U3 and reproduce original entry
 
+        ORG 5E92H
+        CALL %TVC_GAMEPLAY_SCREEN_CLEAR% ; restore gameplay palette, then clear
+
         ORG 0B0E8H
         JP %TVC_NUMBER_INPUT%  ; TVC numeric-key compatibility routine
 
@@ -27,6 +30,9 @@
 
         ORG 9D55H
         CALL %TVC_TEAM_SETUP_CLEAR% ; select team palette before its clear
+
+        ORG 0A370H
+        CALL %TVC_PLACEMENT_SCREEN_CLEAR% ; preserve blue/red deployment teams
 
         ORG 0B15CH
         JP %TVC_MULTILOAD%     ; preserve selector, replace tape transport

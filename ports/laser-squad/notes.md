@@ -581,10 +581,12 @@ recombination.
 The later main-game compatibility renderer selects its GRAPHICS 4 colors from
 a table of four-byte palette profiles. Profile 0 is black, bright cyan, yellow,
 and red for the control-selection screen; profile 1 is black, bright green,
-yellow, and red for subsequent screens; and profile 2 is black, bright green,
-bright cyan, and yellow for team/armour setup. The common clear routine applies
-the currently selected profile to ports `60H-63H`, so additional game-phase
-palettes can be added without duplicating the hardware writes.
+yellow, and red for subsequent screens; profile 2 is black, bright green,
+bright cyan, and yellow for team/armour setup and normal gameplay; and profile
+3 is black, bright green, bright blue, and bright red for deployment. The
+common clear routine applies the currently selected profile to ports
+`60H-63H`, so additional game-phase palettes can be added without duplicating
+the hardware writes.
 
 The `B0ADH` control-screen entry selects profile 0 before its clear. At the
 shared `B0C3H` exit, a narrow compatibility call preserves and stores the
@@ -597,6 +599,22 @@ Each palette profile also has an eight-entry Spectrum-ink-to-slot map. Profile
 white to the bright-cyan slot. The supplied `lsq-lvlsel.rtvcsnap.zip` trace
 showed that pressing `1` reaches the team/armour setup clear through `9D55H`;
 that entry now selects profile 2 before the shared clear.
+
+The placement screenshot pairs show a different priority: both teams may be
+visible at once, with cyan ink on blue paper for one team's `D` fields and
+yellow ink on red paper for the other. Those five colors including black
+cannot coexist in GRAPHICS 4. Profile 3 therefore preserves team identity:
+Spectrum blue/cyan map to bright blue, red/yellow map to bright red, green
+remains green, and white uses a visible green fallback. The existing equal-slot
+fallback makes each `D` black on its true blue or red field; deployed cyan and
+yellow soldiers become blue and red respectively.
+
+Debugger tracing located the common placement clear at `A370H`; both player
+paths call it, so that entry selects profile 3 before the original clear.
+After placement, `5E92H` enters `B1F7H`, whose first operation is another
+screen clear. That call now selects profile 2 before entering `B1F7H`, restoring
+the existing black/green/cyan/yellow gameplay rendering without a separate
+full-screen redraw.
 
 The renderer maps both halves of each Spectrum attribute through the active
 profile: bitmap bits set to one use the ink slot, while cleared bits use the

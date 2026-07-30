@@ -155,6 +155,8 @@ def loader_support_addresses():
         "TVC_CONTROLS_SCREEN_CLEAR",
         "TVC_CONTROLS_SELECTED",
         "TVC_TEAM_SETUP_CLEAR",
+        "TVC_PLACEMENT_SCREEN_CLEAR",
+        "TVC_GAMEPLAY_SCREEN_CLEAR",
         "TVC_STORE_ATTRIBUTE_AND_REDRAW",
         "TVC_GAME_KEYS",
         "TVC_MULTILOAD",

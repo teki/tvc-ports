@@ -53,6 +53,15 @@ runtime loading.
 - **Team/armour palette:** from `lsq-lvlsel.rtvcsnap.zip`, press `1`. The
   `9D55H` team-setup clear must select black/green/cyan/yellow. Spectrum green,
   cyan, and yellow must remain distinct; Spectrum white may use bright cyan.
+- **Placement palette:** the common `A370H` placement clear must select
+  black/green/bright-blue/bright-red. Blue/cyan team fields and units become
+  blue; red/yellow team fields and units become red; equal-color `D` glyphs
+  remain visible in black; and green terrain remains green. Test both players
+  and a screen where both teams' fields are visible.
+- **Gameplay palette restore:** after final placement, the `5E92H` hook must
+  select profile 2 before the original `B1F7H` clear. Normal gameplay must
+  return to black/green/cyan/yellow rather than retaining the placement
+  profile.
 - **Paper/inverse rendering:** the selected soldier name has Spectrum
   attribute `70H` and must render as black text on a bright-yellow background,
   not yellow text on black. Ordinary attributes with paper 0 must retain their

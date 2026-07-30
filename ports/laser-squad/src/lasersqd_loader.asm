@@ -266,6 +266,20 @@ TVC_TEAM_SETUP_CLEAR:
         LD (TVC_PALETTE_ID_RUN),A
         JP 602CH
 
+; A370H is the common deployment-screen clear for both players. Use a
+; placement profile that keeps the original blue and red team fields distinct.
+TVC_PLACEMENT_SCREEN_CLEAR:
+        LD A,03H
+        LD (TVC_PALETTE_ID_RUN),A
+        JP 602CH
+
+; 5E92H enters the normal gameplay/menu clear through B1F7H after deployment.
+; Restore the existing black/green/cyan/yellow profile before that clear.
+TVC_GAMEPLAY_SCREEN_CLEAR:
+        LD A,02H
+        LD (TVC_PALETTE_ID_RUN),A
+        JP 0B1F7H
+
 ; Replacement for the original 693FH-6942H attribute-store sequence used by
 ; the selection highlighter. Preserve OR 40H, the shadow write, registers,
 ; flags, and the final HL increment, while also redrawing that character cell.
@@ -451,6 +465,7 @@ TVC_PALETTES_RUN EQU 2000H+TVC_PALETTES-TVC_SUPPORT_IMAGE
         DB 00H,51H,54H,44H    ; profile 0: controls, black/cyan/yellow/red
         DB 00H,50H,54H,44H    ; profile 1: game, black/green/yellow/red
         DB 00H,50H,51H,54H    ; profile 2: team, black/green/cyan/yellow
+        DB 00H,50H,41H,44H    ; profile 3: placement, black/green/blue/red
 
 TVC_PALETTE_ID:
 TVC_PALETTE_ID_RUN EQU 2000H+TVC_PALETTE_ID-TVC_SUPPORT_IMAGE
@@ -618,6 +633,7 @@ TVC_INK_PALETTE_MAPS_RUN EQU 2000H+TVC_INK_PALETTE_MAPS-TVC_SUPPORT_IMAGE
         DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 0: cyan/yellow/red
         DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 1: green/yellow/red
         DB 00H,02H,03H,02H,01H,02H,03H,02H ; profile 2: white -> cyan
+        DB 00H,02H,03H,03H,01H,02H,03H,01H ; profile 3: team primaries
 
 ; Input A = Spectrum character row, C = byte column. Output HL is the original
 ; Spectrum bitmap address for the top raster of that cell. The original row
