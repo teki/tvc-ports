@@ -14,9 +14,10 @@ The command:
 1. acquires the source archive when absent and verifies its ZIP and TAP hashes;
 2. regenerates and hash-checks the TAP description;
 3. builds all port components in a temporary directory;
-4. checks the three patched CAS hashes and compares all four complete scenario
-   CAS payloads with their exact TAP blocks; and
-5. checks every filename and size in the generated DSK directory.
+4. checks the three patched CAS hashes and the loader-resident converted font;
+5. compares all four complete scenario CAS payloads with their exact TAP blocks
+   and all four native graphics files with fresh offline conversions; and
+6. checks every filename and size in the generated 11-file DSK directory.
 
 It leaves no generated build output in the port. On the first run it populates
 the ignored source-download cache.
@@ -74,25 +75,27 @@ runtime loading.
 - **Numeric input:** press and release `1` and `2`; both the release loop and
   selection call must advance.
 - **Interrupt/drawing:** allow the shopping screen to draw with interrupts
-  active. Coordinates must remain in range and the support image at
-  `2000H-2FFFH` must not be modified by drawing.
+  active. Coordinates must remain in range, the stack must stay below `4000H`,
+  and the installed support image at `2100H-2845H` must not be modified by
+  drawing.
 - **Gameplay input:** verify `Q`, `A`, `O`, `P`, and Space through the
   store/tactical control path, not only in menus.
 - **Firing crosshair:** from `lsql-fire.rtvcsnap.zip`, move or blink the firing
   cursor. Its original 21-pixel XOR cross must appear in cyan at the target
   position, and toggling it must not recolor or damage the trajectory circles.
-- **Drawing performance:** with `lsql-fire.rtvcsnap.zip`, a representative
-  row-9, column-15 `TVC_REDRAW_SHADOW_CELL` call takes 2,414 emulated Z80
-  cycles. The pre-table baseline was 5,926 cycles. Recheck this benchmark when
-  modifying the compatibility packer, and confirm the firing cross and yellow
-  trajectory circles retain their colors.
-- **Support relocation:** the embedded support source overlaps its `2000H`
-  destination after adding the table. The loader must use `LDDR`, and the
-  installed `2000H-26FFH` image must match the generated support TOML before
-  entering the main game. The corrected loader passed this 1,792-byte
-  comparison in `rtvc`, then rendered the scenario-selection screen cleanly.
+- **Drawing performance:** representative synthetic calls using the firing
+  snapshot inputs take 1,272 emulated Z80 cycles for normal drawing and 3,389
+  for large drawing. The last compatibility implementation took 2,414 and
+  6,438 cycles; the pristine Spectrum routines take 655 and 1,853. Recheck all
+  three measurements when modifying the native writers.
+- **Support relocation:** the loader-resident support source at
+  `20FAH-283FH` overlaps its `2100H-2845H` runtime destination. The loader must
+  use `LDDR`, and the installed 1,862-byte image must match the generated
+  support TOML before entering the main game.
 - **Multi-load:** verify the direct payload at `B621H-FFFFH` matches the
-  selected original TAP block.
+  selected original TAP block. Verify the matching `Gxx.CAS` is then loaded as
+  `1640H` bytes at `2880H` and `1800H` bytes at `4000H`, with both ranges equal
+  to the offline conversion of that scenario's `E8DFH-FFFEH` table.
 
 ## Unsplit Multi-load Validation
 
@@ -100,7 +103,27 @@ The direct one-file path was validated in `rtvc` from the clean TVC 1.2
 VT-DOS boot snapshot. The page-0 support routine was called in mode 1 with
 block ID `64H`; it returned through the success path with mapper shadow `B0H`
 and game success flag `00H`. Raw U2/U3 memory at `B621H-FFFFH` matched all
-`49DFH` bytes of `LASERSQD.TAP` block 6.
+`49DFH` bytes of `LASERSQD.TAP` block 6. The same request then loaded the one
+`G64.CAS` file in two ROM block reads; `2880H-3EBFH` and `4000H-57FFH` matched
+the generated native graphics payload byte-for-byte.
+
+## Native Graphics Record
+
+- The build converts all printable main-font glyphs (`20H-7FH`) and embeds the
+  resulting 1,536 bytes in `LOADER.CAS`.
+- Each scenario converts all 185 large glyphs at `E8DFH-FFFEH` into an
+  11,840-byte `Gxx.CAS`. The original `Lxx.CAS` stays byte-identical to its TAP
+  block.
+- Main-game normal, double-height, and large renderers consume native masks
+  directly. The common `844CH` plot path performs native set, clear, and XOR
+  operations and preserves the game's collision result at `5DA5H`.
+- The native attribute highlighter was visually checked on the team setup
+  screen: the current soldier is black on bright yellow, and the old/new cells
+  redraw when selection changes.
+- The firing snapshot was visually checked: yellow trajectory circles and the
+  21-pixel XOR cross are both visible without corrupting each other.
+- The main-game path uses VID0 only and no Spectrum bitmap shadow. The one-time
+  first-stage title screen still uses its existing compatibility shadow.
 
 ## Diagnostic Snapshot Record
 

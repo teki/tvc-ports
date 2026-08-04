@@ -163,7 +163,7 @@ USR(6704)` entry. With breakpoints on both original entry addresses, the
 debugger first stopped at `7530H` after the named `LS1.CAS` load, then at
 `5E28H` after the first stage returned and the named `LS2.CAS` load completed.
 The restored `LS2TVC.BIN` is exactly `57F9H` bytes, matching the original
-`LSCODE` block. Current patches place TVC support in page-0 U0 RAM at `2000H`,
+`LSCODE` block. Current patches place TVC support in page-0 U0 RAM at `2100H`,
 change the immediate border port at `5E38H` from Spectrum `FEH` to TVC `00H`,
 and redirect the numeric-key and Spectrum graphics entry points to it.
 
@@ -188,6 +188,7 @@ Current files on the image:
 | `L65.CAS` | `LASERSQD.TAP` block 7 | Scenario 2 payload loaded unchanged at `B621H-FFFFH` |
 | `L66.CAS` | `LASERSQD.TAP` block 8 | Scenario 3 payload loaded unchanged at `B621H-FFFFH` |
 | `L68.CAS` | `LASERSQD.TAP` block 9 | First expansion payload loaded unchanged at `B621H-FFFFH` |
+| `G64.CAS`-`G68.CAS` | Offline conversion of each scenario's `E8DFH-FFFEH` table | One native GRAPHICS 4 mask table per scenario, loaded into ordinary U0/U1 RAM |
 
 [lasersqd_lscode_5e28_tvc.asm](src/lasersqd_lscode_5e28_tvc.asm) is an overlay, not
 a replacement implementation. The build takes the pristine `5E28H-B620H`
@@ -201,7 +202,7 @@ system loads and calls its first overlay there.
 The original entry at `5E28H` disables interrupts, clears its workspace at
 `5B00H-5E25H`, selects a black Spectrum border, sets the stack to `5E39H`, and
 jumps to the original initializer at `B1C3H`. The current overlay retains that
-original workspace clear, places TVC support in page-0 U0 RAM at `2000H`, and
+original workspace clear, places TVC support in page-0 U0 RAM at `2100H`, and
 translates the border output to TVC port `00H`.
 
 An end-to-end TVC debugger trace reached these original routines in order:
@@ -214,7 +215,7 @@ An end-to-end TVC debugger trace reached these original routines in order:
 
 At the first input dispatch, `B0C7H` is zero, selecting the Spectrum keyboard
 routine at `B0E8H`. That entry now jumps into the relocatable support image
-which the assembly loader copies to `2000H`. It scans TVC rows 0 and 1 directly
+which the assembly loader copies to `2100H`. It scans TVC rows 0 and 1 directly
 through ports `03H`/`58H` and reproduces the original five active-low numeric
 key pairs (`0/5`, `9/4`, `8/3`, `7/2`, `6/1`). Debugger verification returned
 `FFH` with no key and `EFH` while TVC key `1` was held, matching the original
@@ -241,25 +242,25 @@ unchanged game logic.
 The same page-0 image replaces only the hardware-specific bodies of the
 original `602DH` screen clear, `6072H` normal glyph renderer, `64F7H`
 double-height text renderer, and `60AFH` large four-quadrant renderer. It
-retains the original fonts at `B139H`/`E8DFH`,
-coordinates at `5CFEH`, attributes at `5D00H`, and call interfaces. Glyph bytes
-are copied to page-0 scratch RAM before page 2 is temporarily switched from U2
-to VID0, then packed into the established GRAPHICS 4 layout. Palette entries
-1-3 represent the startup screen's bright cyan, yellow, and white inks.
+retains coordinates at `5CFEH`, attributes at `5D00H`, and the original call
+interfaces. The build converts the `B139H` font and each scenario's `E8DFH`
+large table offline. The replacement renderers read those native masks and
+write them directly to VID0 with the active four-color palette profile.
 
 The firing cross is not a glyph. The original `8B7AH` routine XORs 21 pixels
-directly into the Spectrum bitmap through `8444H`: the center and offsets 1-5
-along both axes. Its four callers now use a page-0 wrapper that retains those
-original writes and redraws only the character cells intersected by the 11x11
-cross. This keeps the dynamic cross synchronized with VID0 without translating
-the game's general pixel plotter.
+through the common plotter at `8444H`: the center and offsets 1-5 along both
+axes. The native port now translates that plotter itself, including set,
+clear, XOR, and its logical collision result at `5DA5H`. The cross and later
+direct-pixel paths therefore update VID0 without a Spectrum bitmap shadow.
 
 For rapid testing, bypass BASIC and the initial disk input: start from the boot
 snapshot with `dist/lasersqd_tvc.dsk` mounted and load
 `build/lasersqd_loader_bootstrap.toml`,
-`build/lasersqd_ls_7530_tvc.toml`, `build/lasersqd_lscode_5e28_tvc.toml`, and
-`build/lasersqd_tvc_support.toml` with the debugger, then set `PC=5E28H` and
-continue. The bootstrap TOML supplies the shared `LOAD_BLOCK` implementation
+`build/lasersqd_ls_7530_tvc.toml`, `build/lasersqd_lscode_5e28_tvc.toml`,
+`build/lasersqd_tvc_font.toml`, and `build/lasersqd_tvc_support.toml` with the
+debugger. After a scenario load, also inject the matching generated `Gxx.CAS`
+payload at `2880H` (`1640H` bytes) and `4000H` (`1800H` bytes), then set
+`PC=5E28H` and continue. The bootstrap TOML supplies the shared `LOAD_BLOCK` implementation
 at `1A64H`, which runtime scenario loads also call. The support TOML is the
 same relocated byte image embedded in `LOADER.CAS`; both files are generated
 solely as ignored test intermediates.
@@ -283,6 +284,13 @@ original IDs selected by `B1C3H`: `64H`, `65H`, `66H`, and `68H`.
 Each original payload is stored as one named CAS containing its unchanged
 `49DFH` bytes. The page-0 loader maps U2 and U3 together, then block-reads the
 selected file directly across `B621H-FFFFH`.
+
+After that unchanged payload succeeds, the selector opens one derived
+`G64`/`G65`/`G66`/`G68` file. Two reads from that single file place its first
+89 native large glyphs at `2880H-3EBFH` and the remaining 96 at
+`4000H-57FFH`. This uses ordinary 64K CPU RAM and VID0 only, while retaining
+320 bytes below `SP=4000H`. A direct ID-`64H` test compared the original
+scenario and both native destinations byte-for-byte after the ROM calls.
 
 This replaced an earlier four-file staged transport which had assumed VT-DOS
 could not write beneath its page-3 ROM window. The reusable
@@ -629,7 +637,7 @@ profile: bitmap bits set to one use the ink slot, while cleared bits use the
 paper slot. The supplied team-setup shadow contained `70H` on the selected
 soldier name—black ink on bright-yellow paper. Earlier TVC packing masked the
 attribute with `07H` and forced every cleared pixel to black, losing that
-reverse-video highlight. The two-slot packer now reproduces it without adding
+reverse-video highlight. The native colorizer now reproduces it without adding
 a game-specific inverse flag.
 
 The initial two-slot change exposed a second boundary: the selection
@@ -637,10 +645,10 @@ highlighter at `6918H` updates a two-row by eight-column attribute region
 directly. Its store at `6941H` changed the Spectrum shadow to `70H`, but did
 not redraw the already-rendered TVC cell, so the visible selection remained
 yellow-on-black. The overlay now replaces the four-byte
-`OR 40H`/store/increment sequence at `693FH-6942H` with a compatibility call.
-It preserves the original transformation and register/flag result, writes the
-shadow attribute, converts that attribute address back to a row and column,
-redraws the cell, and performs the original `HL` increment.
+`OR 40H`/store/increment sequence at `693FH-6942H` with a native helper. It
+preserves the original transformation and register/flag result, writes the
+attribute state, recolors the already-rendered native cell by swapping its
+palette-slot encoding, and performs the original `HL` increment.
 
 The completed weapon-selection banner uses Spectrum cyan ink on blue paper.
 Profile 2 maps both source colors to its bright-cyan slot, initially producing
@@ -654,7 +662,7 @@ Previously ink 4 fell through to palette index 0, making text such as
 profile's four-entry palette use deliberate visible fallbacks rather than
 black.
 
-The compatibility renderer now computes the selected ink/paper prefix once
+The previous compatibility renderer computed the selected ink/paper prefix once
 per character cell and expands each source nibble through a page-aligned
 256-byte table at `2600H`. This replaces the former nested nibble and
 palette-slot calls without changing the shadow-screen, inverse-paper, palette,
@@ -663,7 +671,7 @@ or mapped-color collision rules. In `rtvc`, a representative
 2,414 Z80 cycles, a 2.46-times speedup. The build validates all 256 table
 entries against the GRAPHICS 4 split-plane encoding.
 
-Adding the table grew the loader's embedded support source across its runtime
+Adding that table grew the loader's embedded support source across its runtime
 destination: source `1AB2H-21B1H` and destination `2000H-26FFH`. The original
 forward `LDIR` therefore copied correctly only until its destination caught
 its source, then replicated already-overwritten bytes into the later drawing
@@ -671,6 +679,58 @@ support. This explains why the separately loaded title screen remained good
 while subsequent screens were corrupt. Startup now initializes `HL` and `DE`
 to the ends of those ranges and uses `LDDR`; the build checks the relocation
 opcode whenever the ranges overlap.
+
+### Native main-game graphics
+
+[graphics.py](graphics.py) now performs the Spectrum-to-TVC conversion during
+the build. Every Spectrum bitmap byte becomes two GRAPHICS 4 bytes whose set
+pixels select palette slot 3 and whose clear pixels select slot 0. Runtime
+colorization remaps those two logical slots to the ink and paper chosen by the
+active palette profile; the assets therefore remain reusable across menus,
+placement, and gameplay palettes.
+
+The converted memory layout on a 64K TVC is:
+
+| Range | Size | Use |
+| --- | ---: | --- |
+| `1AFAH-20F9H` | `0600H` | Loader-resident native font codes `20H-7FH` |
+| `2100H-2845H` | `0746H` | Relocated TVC runtime support |
+| `2880H-3EBFH` | `1640H` | First 89 native large glyphs |
+| `4000H-57FFH` | `1800H` | Remaining 96 native large glyphs |
+| `5800H-5AFFH` | `0300H` | Spectrum attribute state retained for game logic |
+| `5B00H-FFFFH` | — | Original game workspace/code and scenario payload |
+
+`SP=4000H` grows downward with `140H` (320 bytes) clear between the stack top
+and the low native table. The high table deliberately occupies the retired
+Spectrum bitmap-shadow range. No VID1 or VID2 storage is required: page 2 is
+mapped to VID0 only for the actual screen writes.
+
+The printable main font is embedded in `LOADER.CAS`. Each unchanged scenario
+payload has one generated `G64`/`G65`/`G66`/`G68` companion containing all 185
+converted large glyphs. The loader reads each companion as one file with two
+block reads into the non-contiguous ranges above. At runtime the original
+`B139H` font tail becomes a 64-entry ink/paper colorization table after the
+font has been converted offline.
+
+The normal, double-height, and four-quadrant renderers now consume native data
+directly. The original firing code still calls its common pixel plotter; the
+patched body at `844CH` performs native set, clear, and XOR operations and
+preserves the collision result at `5DA5H`. Attribute-only selection changes
+recolor the existing native cell rather than reconstructing a Spectrum bitmap.
+
+Representative emulated Z80 cycle counts are:
+
+| Renderer | Spectrum original | Compatibility | Native |
+| --- | ---: | ---: | ---: |
+| Normal glyph | 655 | 2,414 | 1,272 |
+| Large four-quadrant glyph | 1,853 | 6,438 | 3,389 |
+
+The native path is about 47% faster than the final compatibility path. It is
+still 1.94 times the Spectrum normal cost and 1.83 times its large-glyph cost,
+because every eight-pixel source row requires two TVC bytes plus dynamic
+ink/paper colorization. This is materially closer to the Spectrum target
+without consuming an extra video bank. The separately loaded, one-time title
+screen still uses its transitional compatibility shadow.
 
 ### TVC interrupt stack isolation
 

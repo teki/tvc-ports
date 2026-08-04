@@ -3,8 +3,8 @@
 This is the ZX Spectrum 48K to TVC port of Laser Squad.
 
 The port is disk-based. It builds an autorun `LOADER.CAS`, two initial program
-files, and one file for each later multi-load payload into a 720 KiB TVC DSK
-image.
+files, one unchanged payload file for each later multi-load, and one matching
+offline-converted native graphics file into a 720 KiB TVC DSK image.
 
 ## Build
 

@@ -29,11 +29,11 @@
         CALL LOAD_BLOCK
         JR NZ,LOADER_DONE
 
-        ; The support source now overlaps its 2000H destination. Copy from the
+        ; The support source overlaps its 2100H destination. Copy from the
         ; end so the relocation cannot overwrite source bytes still to read.
         LD HL,TVC_SUPPORT_IMAGE_END
         DEC HL
-        LD DE,2000H+TVC_SUPPORT_IMAGE_END-TVC_SUPPORT_IMAGE
+        LD DE,TVC_SUPPORT_RUN+TVC_SUPPORT_IMAGE_END-TVC_SUPPORT_IMAGE
         DEC DE
         LD BC,TVC_SUPPORT_IMAGE_END-TVC_SUPPORT_IMAGE
 TVC_SUPPORT_COPY_DIRECTION:
@@ -92,7 +92,62 @@ BLOCK_SIZE:
 BLOCK_TARGET:
         DW 0000H
 
-; Relocatable support copied to U0 RAM at 2000H after LSCODE is loaded. Page 0
+; Open one derived native-graphics file and read its two contiguous glyph
+; groups into the safe U0 and U1 regions on either side of the game stack.
+; Input DE is a length-prefixed filename. Output A follows LOAD_BLOCK.
+LOAD_NATIVE_GRAPHICS:
+        LD A,0D0H
+        LD (1705H),A
+        OR 03H
+        CALL 001BH
+        OR A
+        RET NZ
+
+        LD BC,0010H
+        LD DE,19DFH
+        LD A,(1705H)
+        OR 82H
+        CALL 001BH
+        OR A
+        JR NZ,LOAD_NATIVE_GRAPHICS_CLOSE
+
+        LD BC,TVC_LARGE_NATIVE_LOW_SIZE
+        LD DE,TVC_LARGE_NATIVE_LOW_RUN
+        LD A,(1705H)
+        OR 82H
+        CALL 001BH
+        OR A
+        JR NZ,LOAD_NATIVE_GRAPHICS_CLOSE
+
+        LD BC,TVC_LARGE_NATIVE_HIGH_SIZE
+        LD DE,TVC_LARGE_NATIVE_HIGH_RUN
+        LD A,(1705H)
+        OR 82H
+        CALL 001BH
+
+LOAD_NATIVE_GRAPHICS_CLOSE:
+        PUSH AF
+        LD A,(1705H)
+        OR 04H
+        CALL 001BH
+        POP AF
+        OR A
+        RET
+
+TVC_SUPPORT_RUN EQU 2100H
+TVC_LARGE_NATIVE_LOW_RUN EQU 2880H
+TVC_LARGE_NATIVE_LOW_SIZE EQU 1640H ; 89 glyphs * 64 bytes
+TVC_LARGE_NATIVE_HIGH_RUN EQU 4000H
+TVC_LARGE_NATIVE_HIGH_SIZE EQU 1800H ; 96 glyphs * 64 bytes
+
+; Printable codes 20H-7FH from the original B139H-indexed font are converted
+; offline. The build patches these reserved bytes in LOADER.CAS; they remain at
+; their load address and are accessible while VID0 replaces page 2.
+TVC_NATIVE_FONT:
+        DEFS 0600H
+TVC_NATIVE_FONT_END:
+
+; Relocatable support copied to U0 RAM at 2100H after LSCODE is loaded. Page 0
 ; remains mapped to U0 in the BASIC/game map, giving the port enough room for
 ; the original keyboard and graphics entry-point replacements. Keep absolute
 ; references inside this image limited to fixed game/TVC addresses; branches
@@ -119,7 +174,7 @@ TVC_MAIN_ENTRY:
         ; The TVC firmware interrupt path uses a substantially deeper stack
         ; than the Spectrum IM 1 handler. Keep it in U0 so interrupt-time
         ; pushes cannot overwrite the game's live 5B00H-5E25H workspace.
-        LD SP,4000H
+        LD SP,4000H             ; 140H clear below the native low table
         JP 0B1C3H
 
 TVC_NUMBER_INPUT:
@@ -286,15 +341,17 @@ TVC_GAMEPLAY_SCREEN_CLEAR:
         JP 0B1F7H
 
 ; Replacement for the original 693FH-6942H attribute-store sequence used by
-; the selection highlighter. Preserve OR 40H, the shadow write, registers,
-; flags, and the final HL increment, while also redrawing that character cell.
+; the selection highlighter. Preserve OR 40H, the attribute write, registers,
+; flags, and the final HL increment, while recoloring the native TVC cell.
 TVC_STORE_ATTRIBUTE_AND_REDRAW:
         OR 40H
-        LD (HL),A
         PUSH AF
         PUSH BC
         PUSH DE
         PUSH HL
+        LD B,(HL)                ; old Spectrum attribute
+        LD (HL),A
+        LD E,A                   ; new Spectrum attribute
         LD A,L
         AND 1FH
         LD C,A                  ; attribute column
@@ -312,7 +369,7 @@ TVC_STORE_ATTRIBUTE_AND_REDRAW:
         RRCA
         AND 07H
         OR D                    ; complete attribute row 0-23
-        CALL TVC_REDRAW_SHADOW_CELL_RUN
+        CALL TVC_RECOLOR_ATTRIBUTE_CELL_RUN
         POP HL
         POP DE
         POP BC
@@ -325,7 +382,7 @@ TVC_STORE_ATTRIBUTE_AND_REDRAW:
 ; The original body reads Spectrum rows FDH, FBH, DFH, and 7FH from port FEH;
 ; translate only those five keys to their TVC matrix positions.
 TVC_GAME_KEYS:
-TVC_GAME_KEYS_RUN EQU 2000H+TVC_GAME_KEYS-TVC_SUPPORT_IMAGE
+TVC_GAME_KEYS_RUN EQU TVC_SUPPORT_RUN+TVC_GAME_KEYS-TVC_SUPPORT_IMAGE
         LD E,0FFH
 
         LD A,(0B11H)
@@ -393,17 +450,22 @@ TVC_MULTILOAD:
         CP 68H
         JP NZ,TVC_MULTILOAD_FAIL_RUN
         LD DE,TVC_BLOCK_68_NAME_RUN
+        LD HL,TVC_GRAPHICS_68_NAME_RUN
         JR TVC_MULTILOAD_SELECTED
 TVC_MULTILOAD_64:
         LD DE,TVC_BLOCK_64_NAME_RUN
+        LD HL,TVC_GRAPHICS_64_NAME_RUN
         JR TVC_MULTILOAD_SELECTED
 TVC_MULTILOAD_65:
         LD DE,TVC_BLOCK_65_NAME_RUN
+        LD HL,TVC_GRAPHICS_65_NAME_RUN
         JR TVC_MULTILOAD_SELECTED
 TVC_MULTILOAD_66:
         LD DE,TVC_BLOCK_66_NAME_RUN
+        LD HL,TVC_GRAPHICS_66_NAME_RUN
 
 TVC_MULTILOAD_SELECTED:
+        LD (TVC_NATIVE_NAME_PTR_RUN),HL
         LD A,(0003H)
         AND 1FH
         OR 0A0H
@@ -414,11 +476,15 @@ TVC_MULTILOAD_SELECTED:
         CALL LOAD_BLOCK
         OR A
         JP NZ,TVC_MULTILOAD_FAIL_RUN
+        LD DE,(TVC_NATIVE_NAME_PTR_RUN)
+        CALL LOAD_NATIVE_GRAPHICS
+        OR A
+        JP NZ,TVC_MULTILOAD_FAIL_RUN
         LD (0B15BH),A           ; original success flag
         RET
 
 TVC_MULTILOAD_FAIL:
-TVC_MULTILOAD_FAIL_RUN EQU 2000H+TVC_MULTILOAD_FAIL-TVC_SUPPORT_IMAGE
+TVC_MULTILOAD_FAIL_RUN EQU TVC_SUPPORT_RUN+TVC_MULTILOAD_FAIL-TVC_SUPPORT_IMAGE
         LD A,(0003H)
         AND 1FH
         OR 0A0H                 ; restore U2/U3 game mapping
@@ -431,23 +497,38 @@ TVC_MULTILOAD_FAIL_RUN EQU 2000H+TVC_MULTILOAD_FAIL-TVC_SUPPORT_IMAGE
         RET
 
 TVC_BLOCK_64_NAME:
-TVC_BLOCK_64_NAME_RUN EQU 2000H+TVC_BLOCK_64_NAME-TVC_SUPPORT_IMAGE
+TVC_BLOCK_64_NAME_RUN EQU TVC_SUPPORT_RUN+TVC_BLOCK_64_NAME-TVC_SUPPORT_IMAGE
         DB 3,"L64"
 TVC_BLOCK_65_NAME:
-TVC_BLOCK_65_NAME_RUN EQU 2000H+TVC_BLOCK_65_NAME-TVC_SUPPORT_IMAGE
+TVC_BLOCK_65_NAME_RUN EQU TVC_SUPPORT_RUN+TVC_BLOCK_65_NAME-TVC_SUPPORT_IMAGE
         DB 3,"L65"
 TVC_BLOCK_66_NAME:
-TVC_BLOCK_66_NAME_RUN EQU 2000H+TVC_BLOCK_66_NAME-TVC_SUPPORT_IMAGE
+TVC_BLOCK_66_NAME_RUN EQU TVC_SUPPORT_RUN+TVC_BLOCK_66_NAME-TVC_SUPPORT_IMAGE
         DB 3,"L66"
 TVC_BLOCK_68_NAME:
-TVC_BLOCK_68_NAME_RUN EQU 2000H+TVC_BLOCK_68_NAME-TVC_SUPPORT_IMAGE
+TVC_BLOCK_68_NAME_RUN EQU TVC_SUPPORT_RUN+TVC_BLOCK_68_NAME-TVC_SUPPORT_IMAGE
         DB 3,"L68"
+TVC_GRAPHICS_64_NAME:
+TVC_GRAPHICS_64_NAME_RUN EQU TVC_SUPPORT_RUN+TVC_GRAPHICS_64_NAME-TVC_SUPPORT_IMAGE
+        DB 3,"G64"
+TVC_GRAPHICS_65_NAME:
+TVC_GRAPHICS_65_NAME_RUN EQU TVC_SUPPORT_RUN+TVC_GRAPHICS_65_NAME-TVC_SUPPORT_IMAGE
+        DB 3,"G65"
+TVC_GRAPHICS_66_NAME:
+TVC_GRAPHICS_66_NAME_RUN EQU TVC_SUPPORT_RUN+TVC_GRAPHICS_66_NAME-TVC_SUPPORT_IMAGE
+        DB 3,"G66"
+TVC_GRAPHICS_68_NAME:
+TVC_GRAPHICS_68_NAME_RUN EQU TVC_SUPPORT_RUN+TVC_GRAPHICS_68_NAME-TVC_SUPPORT_IMAGE
+        DB 3,"G68"
+TVC_NATIVE_NAME_PTR:
+TVC_NATIVE_NAME_PTR_RUN EQU TVC_SUPPORT_RUN+TVC_NATIVE_NAME_PTR-TVC_SUPPORT_IMAGE
+        DW 0000H
 
 ; Palette profiles contain the four values written to ports 60H-63H.
 ; A selects the zero-based profile. Add new four-byte profiles here and select
 ; them through TVC_PALETTE_ID_RUN at the appropriate game transition.
 TVC_APPLY_PALETTE:
-TVC_APPLY_PALETTE_RUN EQU 2000H+TVC_APPLY_PALETTE-TVC_SUPPORT_IMAGE
+TVC_APPLY_PALETTE_RUN EQU TVC_SUPPORT_RUN+TVC_APPLY_PALETTE-TVC_SUPPORT_IMAGE
         ADD A,A
         ADD A,A
         LD E,A
@@ -463,33 +544,62 @@ TVC_APPLY_PALETTE_NEXT:
         INC C
         DEC E
         JR NZ,TVC_APPLY_PALETTE_NEXT
+        CALL TVC_BUILD_ATTRIBUTE_TABLE_RUN
         RET
 
 TVC_PALETTES:
-TVC_PALETTES_RUN EQU 2000H+TVC_PALETTES-TVC_SUPPORT_IMAGE
+TVC_PALETTES_RUN EQU TVC_SUPPORT_RUN+TVC_PALETTES-TVC_SUPPORT_IMAGE
         DB 00H,51H,54H,44H    ; profile 0: controls, black/cyan/yellow/red
         DB 00H,50H,54H,44H    ; profile 1: game, black/green/yellow/red
         DB 00H,50H,51H,54H    ; profile 2: team, black/green/cyan/yellow
         DB 00H,50H,41H,44H    ; profile 3: placement, black/green/blue/red
 
 TVC_PALETTE_ID:
-TVC_PALETTE_ID_RUN EQU 2000H+TVC_PALETTE_ID-TVC_SUPPORT_IMAGE
+TVC_PALETTE_ID_RUN EQU TVC_SUPPORT_RUN+TVC_PALETTE_ID-TVC_SUPPORT_IMAGE
         DB 00H                 ; start with the control-screen profile
 
-; Replacement for the hardware-specific body at 602DH. Preserve the original
-; Spectrum RAM clear because game code may inspect that screen state, then
-; clear VID0 and apply the palette profile selected for the current game phase.
+; Build 64 delta/paper byte pairs at B239H, retiring the original Spectrum
+; font after its printable glyphs have been converted offline. Draw calls can
+; then reduce an attribute to one indexed lookup instead of mapping two colors.
+TVC_BUILD_ATTRIBUTE_TABLE:
+TVC_BUILD_ATTRIBUTE_TABLE_RUN EQU TVC_SUPPORT_RUN+TVC_BUILD_ATTRIBUTE_TABLE-TVC_SUPPORT_IMAGE
+        XOR A
+TVC_BUILD_ATTRIBUTE_NEXT:
+        PUSH AF
+        CALL TVC_SELECT_INK_RUN
+        LD A,(TVC_INK_SLOT_RUN)
+        CALL TVC_SLOT_PATTERN_RUN
+        LD B,A
+        LD A,(TVC_PAPER_SLOT_RUN)
+        CALL TVC_SLOT_PATTERN_RUN
+        LD C,A
+        XOR B
+        LD B,A
+        POP AF
+        PUSH AF
+        ADD A,A
+        LD E,A
+        LD D,00H
+        LD HL,0B239H
+        ADD HL,DE
+        LD (HL),B
+        INC HL
+        LD (HL),C
+        POP AF
+        INC A
+        CP 40H
+        JR NZ,TVC_BUILD_ATTRIBUTE_NEXT
+        RET
+
+; Replacement for the hardware-specific body at 602DH. The retired Spectrum
+; bitmap area now holds native glyph data, so preserve only the game's 768-byte
+; attribute state and clear VID0 directly.
 TVC_CLEAR_SCREEN:
         PUSH AF
         LD HL,5AFFH
         LD DE,5AFEH
         LD BC,02FFH
         LD (HL),A
-        LDDR
-        DEC HL
-        DEC DE
-        LD (HL),C
-        LD BC,17FFH
         LDDR
         LD A,(0B13H)
         AND 0FCH
@@ -506,46 +616,46 @@ TVC_CLEAR_SCREEN:
         LD HL,8000H
         LD DE,8001H
         LD BC,3FFFH
-        LD (HL),00H
+        LD (HL),00H             ; all current screen clears use paper black
         LDIR                    ; clear the complete 16 KiB video bank
         POP AF
         LD (0003H),A
         OUT (02H),A             ; restore U2 while leaving U3 mapped
         LD A,(TVC_PALETTE_ID_RUN)
         CALL TVC_APPLY_PALETTE_RUN
-        POP AF                 ; original clear preserved its input attribute
+        POP AF                  ; original clear preserved its input attribute
         RET
 
 ; Input A is a Spectrum attribute. Select GRAPHICS 4 slots for both ink and
 ; paper through the active profile's eight-entry color map. This preserves
 ; reverse-video attributes such as 70H (black ink on bright-yellow paper).
 TVC_SELECT_INK:
-TVC_SELECT_INK_RUN EQU 2000H+TVC_SELECT_INK-TVC_SUPPORT_IMAGE
+TVC_SELECT_INK_RUN EQU TVC_SUPPORT_RUN+TVC_SELECT_INK-TVC_SUPPORT_IMAGE
         PUSH AF
         AND 07H
         CALL TVC_MAP_COLOR_RUN
-        LD (3020H),A
+        LD (TVC_INK_SLOT_RUN),A
         POP AF
         RRCA
         RRCA
         RRCA
         AND 07H
         CALL TVC_MAP_COLOR_RUN
-        LD (3021H),A
+        LD (TVC_PAPER_SLOT_RUN),A
         OR A
         RET Z                   ; black paper needs no collision fallback
         LD C,A
-        LD A,(3020H)
+        LD A,(TVC_INK_SLOT_RUN)
         CP C
         RET NZ
         XOR A
-        LD (3020H),A            ; same non-black slot: use black ink
+        LD (TVC_INK_SLOT_RUN),A  ; same non-black slot: use black ink
         RET
 
 ; Input A is a Spectrum color index 0-7. Output A is the active profile's
 ; GRAPHICS 4 palette slot.
 TVC_MAP_COLOR:
-TVC_MAP_COLOR_RUN EQU 2000H+TVC_MAP_COLOR-TVC_SUPPORT_IMAGE
+TVC_MAP_COLOR_RUN EQU TVC_SUPPORT_RUN+TVC_MAP_COLOR-TVC_SUPPORT_IMAGE
         LD E,A
         LD A,(TVC_PALETTE_ID_RUN)
         ADD A,A
@@ -559,256 +669,404 @@ TVC_MAP_COLOR_RUN EQU 2000H+TVC_MAP_COLOR-TVC_SUPPORT_IMAGE
         LD A,(HL)
         RET
 TVC_INK_PALETTE_MAPS:
-TVC_INK_PALETTE_MAPS_RUN EQU 2000H+TVC_INK_PALETTE_MAPS-TVC_SUPPORT_IMAGE
+TVC_INK_PALETTE_MAPS_RUN EQU TVC_SUPPORT_RUN+TVC_INK_PALETTE_MAPS-TVC_SUPPORT_IMAGE
         ; Spectrum inks: black, blue, red, magenta, green, cyan, yellow, white
         DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 0: cyan/yellow/red
         DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 1: green/yellow/red
         DB 00H,02H,03H,02H,01H,02H,03H,02H ; profile 2: white -> cyan
         DB 00H,02H,03H,03H,01H,02H,03H,01H ; profile 3: team primaries
 
-; Input A = Spectrum character row, C = byte column. Output HL is the original
-; Spectrum bitmap address for the top raster of that cell. The original row
-; table at 6042H remains authoritative.
-TVC_SHADOW_BITMAP_DEST:
-TVC_SHADOW_BITMAP_DEST_RUN EQU 2000H+TVC_SHADOW_BITMAP_DEST-TVC_SUPPORT_IMAGE
+; Convert a GRAPHICS 4 palette slot to the byte pattern for four pixels.
+; Input A = slot 0-3, output A = 00H/F0H/0FH/FFH.
+TVC_SLOT_PATTERN:
+TVC_SLOT_PATTERN_RUN EQU TVC_SUPPORT_RUN+TVC_SLOT_PATTERN-TVC_SUPPORT_IMAGE
         LD E,A
         LD D,00H
-        LD HL,6042H
+        LD HL,TVC_SLOT_PATTERNS_RUN
         ADD HL,DE
-        ADD HL,DE
-        LD E,(HL)
-        INC HL
-        LD D,(HL)
-        LD L,C
-        LD H,00H
-        ADD HL,DE
+        LD A,(HL)
         RET
+TVC_SLOT_PATTERNS:
+TVC_SLOT_PATTERNS_RUN EQU TVC_SUPPORT_RUN+TVC_SLOT_PATTERNS-TVC_SUPPORT_IMAGE
+        DB 00H,0F0H,0FH,0FFH
 
-; Input DE = eight source rows, HL = Spectrum shadow destination. Spectrum
-; raster rows in a character cell advance by incrementing the high byte.
-TVC_COPY_8_TO_SHADOW:
-TVC_COPY_8_TO_SHADOW_RUN EQU 2000H+TVC_COPY_8_TO_SHADOW-TVC_SUPPORT_IMAGE
-        LD B,08H
-TVC_COPY_8_TO_SHADOW_ROW:
-        LD A,(DE)
-        LD (HL),A
-        INC DE
-        INC H
-        DJNZ TVC_COPY_8_TO_SHADOW_ROW
-        RET
-
-; Input DE = four source rows, HL = Spectrum shadow destination. Each source
-; raster is written twice, matching the original double-height renderer.
-TVC_COPY_4_DOUBLED_TO_SHADOW:
-TVC_COPY_4_DOUBLED_TO_SHADOW_RUN EQU 2000H+TVC_COPY_4_DOUBLED_TO_SHADOW-TVC_SUPPORT_IMAGE
-        LD B,04H
-TVC_COPY_4_DOUBLED_ROW:
-        LD A,(DE)
-        LD (HL),A
-        INC H
-        LD (HL),A
-        INC H
-        INC DE
-        DJNZ TVC_COPY_4_DOUBLED_ROW
-        RET
-
-; Input A = row, C = column. Redraw one complete character cell from the
-; canonical Spectrum bitmap/attribute shadow into TVC GRAPHICS 4 VRAM.
-TVC_REDRAW_SHADOW_CELL:
-TVC_REDRAW_SHADOW_CELL_RUN EQU 2000H+TVC_REDRAW_SHADOW_CELL-TVC_SUPPORT_IMAGE
-        LD (3024H),A
-        LD A,C
-        LD (3025H),A
-        LD A,(3024H)
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        LD (3022H),HL
-        LD A,H
-        ADD A,07H              ; original conversion uses the final raster
-        RRCA
-        RRCA
-        RRCA
-        AND 03H
-        OR 58H
-        LD H,A
-        LD A,(HL)              ; canonical shadow attribute
-        CALL TVC_SELECT_INK_RUN
-        LD A,(3020H)           ; packing-table bits 7-6: ink slot
-        RRCA
-        RRCA
-        LD C,A
-        LD A,(3021H)           ; packing-table bits 5-4: paper slot
-        RLCA
-        RLCA
-        RLCA
-        RLCA
-        OR C
-        LD (302DH),A
-        LD A,(0003H)
-        PUSH AF
-        AND 0DFH               ; selected video RAM in page 2
-        LD (0003H),A
-        OUT (02H),A
-        LD A,(3025H)
+; Prepare the two self-modifying native-mask operations for one attribute.
+; Native assets store set pixels as slot 3 and clear pixels as slot 0. The
+; final byte is paper XOR (mask AND (ink XOR paper)).
+TVC_PREPARE_NATIVE_COLOR:
+TVC_PREPARE_NATIVE_COLOR_RUN EQU TVC_SUPPORT_RUN+TVC_PREPARE_NATIVE_COLOR-TVC_SUPPORT_IMAGE
+        AND 3FH
         ADD A,A
-        LD E,A                 ; one Spectrum byte becomes two TVC bytes
-        LD A,(3024H)
+        LD E,A
+        LD D,00H
+        LD HL,0B239H
+        ADD HL,DE
+        LD A,(HL)
+        LD (TVC_COPY_AND_1_RUN+1),A
+        LD (TVC_COPY_AND_2_RUN+1),A
+        INC HL
+        LD A,(HL)
+        LD (TVC_COPY_XOR_1_RUN+1),A
+        LD (TVC_COPY_XOR_2_RUN+1),A
+        RET
+
+; Input A = character row, C = byte column. Output HL = 5800H attribute.
+TVC_ATTRIBUTE_DEST:
+TVC_ATTRIBUTE_DEST_RUN EQU TVC_SUPPORT_RUN+TVC_ATTRIBUTE_DEST-TVC_SUPPORT_IMAGE
+        LD L,A
+        LD H,00H
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        LD E,C
+        LD D,00H
+        ADD HL,DE
+        LD DE,5800H
+        ADD HL,DE
+        RET
+
+; Input A = character row, C = byte column. Output DE = VID0 cell address.
+TVC_VIDEO_DEST:
+TVC_VIDEO_DEST_RUN EQU TVC_SUPPORT_RUN+TVC_VIDEO_DEST-TVC_SUPPORT_IMAGE
         ADD A,A
         ADD A,80H
-        LD D,A                 ; character row to TVC raster page
-        LD HL,(3022H)
-        LD A,(302DH)
-        LD C,A                 ; packing-table ink/paper prefix
-        LD B,08H
-TVC_REDRAW_SHADOW_ROW:
-        LD A,(HL)
-        PUSH HL
-        PUSH AF
-        RRCA
-        RRCA
-        RRCA
-        RRCA
-        AND 0FH                ; high source nibble
-        OR C
-        LD L,A
-        LD H,26H               ; page-aligned TVC_PACK_NIBBLE_TABLE_RUN
-        LD A,(HL)
-        LD (DE),A
-        INC DE
-        POP AF
-        AND 0FH                ; low source nibble
-        OR C
-        LD L,A
-        LD H,26H
-        LD A,(HL)
-        LD (DE),A
-        INC DE
-        POP HL
-        DEC DE
-        DEC DE
-        LD A,E
-        ADD A,40H
+        LD D,A
+        LD A,C
+        ADD A,A
         LD E,A
-        JR NC,TVC_REDRAW_SHADOW_NEXT
+        RET
+
+; Copy one 8-row native cell. HL is 16 interleaved native mask bytes and DE
+; is the VID0 destination. Color constants are patched once per cell above.
+TVC_COPY_NATIVE_CELL:
+TVC_COPY_NATIVE_CELL_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_NATIVE_CELL-TVC_SUPPORT_IMAGE
+        LD B,08H
+TVC_COPY_NATIVE_ROW:
+        LD A,(HL)
+TVC_COPY_AND_1:
+TVC_COPY_AND_1_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_AND_1-TVC_SUPPORT_IMAGE
+        AND 00H
+TVC_COPY_XOR_1:
+TVC_COPY_XOR_1_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_XOR_1-TVC_SUPPORT_IMAGE
+        XOR 00H
+        LD (DE),A
+        INC HL
+        INC DE
+        LD A,(HL)
+TVC_COPY_AND_2:
+TVC_COPY_AND_2_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_AND_2-TVC_SUPPORT_IMAGE
+        AND 00H
+TVC_COPY_XOR_2:
+TVC_COPY_XOR_2_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_XOR_2-TVC_SUPPORT_IMAGE
+        XOR 00H
+        LD (DE),A
+        INC HL
+        LD A,E
+        ADD A,3FH               ; second byte to next 64-byte raster
+        LD E,A
+        JR NC,TVC_COPY_NATIVE_NEXT
         INC D
-TVC_REDRAW_SHADOW_NEXT:
-        INC H
-        DJNZ TVC_REDRAW_SHADOW_ROW
-        POP AF
+TVC_COPY_NATIVE_NEXT:
+        DJNZ TVC_COPY_NATIVE_ROW
+        RET
+
+; Slot-3 ink on black paper is already final TVC data. Seven unrolled row
+; advances make this common path a direct 16-byte native copy.
+TVC_COPY_NATIVE_DIRECT:
+TVC_COPY_NATIVE_DIRECT_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_NATIVE_DIRECT-TVC_SUPPORT_IMAGE
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_2
+        INC D
+TVC_COPY_DIRECT_2:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_3
+        INC D
+TVC_COPY_DIRECT_3:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_4
+        INC D
+TVC_COPY_DIRECT_4:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_5
+        INC D
+TVC_COPY_DIRECT_5:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_6
+        INC D
+TVC_COPY_DIRECT_6:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_7
+        INC D
+TVC_COPY_DIRECT_7:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_8
+        INC D
+TVC_COPY_DIRECT_8:
+        LDI
+        LDI
+        RET
+
+TVC_COPY_NATIVE_SELECTED:
+TVC_COPY_NATIVE_SELECTED_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_NATIVE_SELECTED-TVC_SUPPORT_IMAGE
+        LD A,(TVC_COPY_XOR_1_RUN+1)
+        OR A
+        JP NZ,TVC_COPY_NATIVE_CELL_RUN
+        LD A,(TVC_COPY_AND_1_RUN+1)
+        CP 0FFH
+        JP Z,TVC_COPY_NATIVE_DIRECT_RUN
+        JP TVC_COPY_NATIVE_CELL_RUN
+
+; Input HL = 16 native source bytes, A = row, C = column. Attribute state is
+; already stored at 5800H-5AFFH. Map VID0 only for the actual writes.
+TVC_DRAW_NATIVE_CELL:
+TVC_DRAW_NATIVE_CELL_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_NATIVE_CELL-TVC_SUPPORT_IMAGE
+        LD (TVC_NATIVE_SOURCE_PTR_RUN),HL
+        LD (TVC_NATIVE_ROW_RUN),A
+        LD A,C
+        LD (TVC_NATIVE_COLUMN_RUN),A
+        LD A,(TVC_NATIVE_ROW_RUN)
+        CALL TVC_ATTRIBUTE_DEST_RUN
+        LD A,(HL)
+        CALL TVC_PREPARE_NATIVE_COLOR_RUN
+        LD A,(0003H)
+        LD (TVC_NATIVE_MAPPER_RUN),A
+        AND 0DFH
+        LD (0003H),A
+        OUT (02H),A
+        CALL TVC_DRAW_NATIVE_CELL_MAPPED_RUN
+        LD A,(TVC_NATIVE_MAPPER_RUN)
         LD (0003H),A
         OUT (02H),A
         RET
 
-; Input A is the original character code. Reproduce the original 6072H writes
-; into the Spectrum shadow, including its attribute write, then redraw the cell.
+; Draw with VID0 already mapped and the color immediates already prepared.
+TVC_DRAW_NATIVE_CELL_MAPPED:
+TVC_DRAW_NATIVE_CELL_MAPPED_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_NATIVE_CELL_MAPPED-TVC_SUPPORT_IMAGE
+        LD HL,(TVC_NATIVE_SOURCE_PTR_RUN)
+        LD A,(TVC_NATIVE_COLUMN_RUN)
+        LD C,A
+        LD A,(TVC_NATIVE_ROW_RUN)
+        CALL TVC_VIDEO_DEST_RUN
+        JP TVC_COPY_NATIVE_SELECTED_RUN
+
+; Register-only mapped entry used by the four-quadrant renderer.
+; Input HL=source, A=row, C=column.
+TVC_DRAW_NATIVE_AT:
+TVC_DRAW_NATIVE_AT_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_NATIVE_AT-TVC_SUPPORT_IMAGE
+        CALL TVC_VIDEO_DEST_RUN
+        JP TVC_COPY_NATIVE_SELECTED_RUN
+
+; Input A is the original character code. Printable codes 20H-7FH were
+; converted offline into the loader-resident TVC_NATIVE_FONT table.
 TVC_DRAW_NORMAL:
         PUSH HL
         PUSH DE
         PUSH AF
         PUSH BC
+        SUB 20H
         LD L,A
         LD H,00H
         ADD HL,HL
         ADD HL,HL
         ADD HL,HL
-        LD DE,0B139H
+        ADD HL,HL
+        LD DE,TVC_NATIVE_FONT
         ADD HL,DE
-        EX DE,HL               ; DE = original B139H glyph rows
-        PUSH DE
-        LD HL,(5CFEH)
-        LD A,L                 ; row
-        LD C,H                 ; column
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        POP DE
         PUSH HL
-        CALL TVC_COPY_8_TO_SHADOW_RUN
-        POP HL
-        LD A,H
-        ADD A,07H              ; original conversion uses the final raster
-        RRCA
-        RRCA
-        RRCA
-        AND 03H
-        OR 58H
-        LD H,A
-        LD A,(5D00H)
-        LD (HL),A              ; preserve original Spectrum attribute write
         LD HL,(5CFEH)
         LD A,L
         LD C,H
-        CALL TVC_REDRAW_SHADOW_CELL_RUN
+        CALL TVC_ATTRIBUTE_DEST_RUN
+        LD A,(5D00H)
+        LD (HL),A
+        CALL TVC_PREPARE_NATIVE_COLOR_RUN
+        LD A,(0003H)
+        LD (TVC_NATIVE_MAPPER_RUN),A
+        AND 0DFH
+        LD (0003H),A
+        OUT (02H),A
+        POP HL
+        LD DE,(5CFEH)
+        LD A,E
+        LD C,D
+        CALL TVC_VIDEO_DEST_RUN
+        CALL TVC_COPY_NATIVE_SELECTED_RUN
+        LD A,(TVC_NATIVE_MAPPER_RUN)
+        LD (0003H),A
+        OUT (02H),A
         POP BC
-        LD B,00H               ; original eight-row loop returned B=0
+        LD B,00H
         POP AF
         POP DE
         POP HL
         RET
 
-; Original 64F7H double-height text renderer. Preserve its register interface,
-; write both Spectrum shadow cells and attributes, then redraw both TVC cells.
+; Draw four native source rows twice each. Inputs and mapper behavior match
+; TVC_DRAW_NATIVE_CELL, but the 8-row font becomes one double-height cell.
+TVC_DRAW_NATIVE_HALF_DOUBLE:
+TVC_DRAW_NATIVE_HALF_DOUBLE_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_NATIVE_HALF_DOUBLE-TVC_SUPPORT_IMAGE
+        LD (TVC_NATIVE_SOURCE_PTR_RUN),HL
+        LD (TVC_NATIVE_ROW_RUN),A
+        LD A,C
+        LD (TVC_NATIVE_COLUMN_RUN),A
+        LD A,(TVC_NATIVE_ROW_RUN)
+        CALL TVC_ATTRIBUTE_DEST_RUN
+        LD A,(HL)
+        CALL TVC_PREPARE_NATIVE_COLOR_RUN
+        LD A,(0003H)
+        LD (TVC_NATIVE_MAPPER_RUN),A
+        AND 0DFH
+        LD (0003H),A
+        OUT (02H),A
+        LD HL,(TVC_NATIVE_SOURCE_PTR_RUN)
+        LD A,(TVC_NATIVE_COLUMN_RUN)
+        LD C,A
+        LD A,(TVC_NATIVE_ROW_RUN)
+        CALL TVC_VIDEO_DEST_RUN
+        LD B,04H
+TVC_COPY_DOUBLE_ROW:
+        LD A,(HL)
+        CALL TVC_COLOR_NATIVE_BYTE_RUN
+        LD (TVC_NATIVE_BYTE_1_RUN),A
+        INC HL
+        LD A,(HL)
+        CALL TVC_COLOR_NATIVE_BYTE_RUN
+        LD (TVC_NATIVE_BYTE_2_RUN),A
+        INC HL
+        PUSH HL
+        CALL TVC_WRITE_DOUBLE_ROW_RUN
+        POP HL
+        DJNZ TVC_COPY_DOUBLE_ROW
+        LD A,(TVC_NATIVE_MAPPER_RUN)
+        LD (0003H),A
+        OUT (02H),A
+        RET
+
+TVC_COLOR_NATIVE_BYTE:
+TVC_COLOR_NATIVE_BYTE_RUN EQU TVC_SUPPORT_RUN+TVC_COLOR_NATIVE_BYTE-TVC_SUPPORT_IMAGE
+        LD C,A
+        LD A,(TVC_COPY_AND_1_RUN+1)
+        AND C
+        LD C,A
+        LD A,(TVC_COPY_XOR_1_RUN+1)
+        XOR C
+        RET
+
+; DE addresses the first byte of a raster. Write the saved pair twice and
+; advance DE to the following source row (two TVC rasters later).
+TVC_WRITE_DOUBLE_ROW:
+TVC_WRITE_DOUBLE_ROW_RUN EQU TVC_SUPPORT_RUN+TVC_WRITE_DOUBLE_ROW-TVC_SUPPORT_IMAGE
+        LD A,(TVC_NATIVE_BYTE_1_RUN)
+        LD (DE),A
+        INC DE
+        LD A,(TVC_NATIVE_BYTE_2_RUN)
+        LD (DE),A
+        LD A,E
+        ADD A,3FH
+        LD E,A
+        JR NC,TVC_WRITE_DOUBLE_SECOND
+        INC D
+TVC_WRITE_DOUBLE_SECOND:
+        LD A,(TVC_NATIVE_BYTE_1_RUN)
+        LD (DE),A
+        INC DE
+        LD A,(TVC_NATIVE_BYTE_2_RUN)
+        LD (DE),A
+        LD A,E
+        ADD A,3FH
+        LD E,A
+        RET NC
+        INC D
+        RET
+
 TVC_DRAW_DOUBLE:
         PUSH HL
         PUSH DE
         PUSH BC
         PUSH AF
+        SUB 20H
         LD L,A
         LD H,00H
         ADD HL,HL
         ADD HL,HL
         ADD HL,HL
-        LD DE,0B139H
+        ADD HL,HL
+        LD DE,TVC_NATIVE_FONT
         ADD HL,DE
-        EX DE,HL               ; DE = eight original font rows
-        PUSH DE
-        LD HL,(5CFEH)
-        LD A,L
-        LD C,H
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        POP DE
-        CALL TVC_COPY_4_DOUBLED_TO_SHADOW_RUN
-        PUSH DE
-        LD HL,(5CFEH)
-        LD A,L
-        INC A
-        LD C,H
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        POP DE
-        CALL TVC_COPY_4_DOUBLED_TO_SHADOW_RUN
-
-        LD HL,(5CFEH)
-        LD A,L
-        LD C,H
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        CALL TVC_BITMAP_TO_ATTRIBUTE_RUN
+        LD (TVC_NATIVE_SOURCE_PTR_RUN),HL
+        LD DE,(5CFEH)
+        LD A,E
+        LD C,D
+        CALL TVC_ATTRIBUTE_DEST_RUN
         LD A,(5D00H)
         LD (HL),A
-        LD HL,(5CFEH)
-        LD A,L
+        LD DE,(5CFEH)
+        LD A,E
         INC A
-        LD C,H
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        CALL TVC_BITMAP_TO_ATTRIBUTE_RUN
+        LD C,D
+        CALL TVC_ATTRIBUTE_DEST_RUN
         LD A,(5D01H)
         LD (HL),A
-
-        LD HL,(5CFEH)
-        LD A,L
-        LD C,H
-        CALL TVC_REDRAW_SHADOW_CELL_RUN
-        LD HL,(5CFEH)
-        LD A,L
+        LD HL,(TVC_NATIVE_SOURCE_PTR_RUN)
+        LD DE,(5CFEH)
+        LD A,E
+        LD C,D
+        CALL TVC_DRAW_NATIVE_HALF_DOUBLE_RUN
+        LD HL,(TVC_NATIVE_SOURCE_PTR_RUN)
+        LD DE,0008H
+        ADD HL,DE
+        LD DE,(5CFEH)
+        LD A,E
         INC A
-        LD C,H
-        CALL TVC_REDRAW_SHADOW_CELL_RUN
+        LD C,D
+        CALL TVC_DRAW_NATIVE_HALF_DOUBLE_RUN
         POP AF
         POP BC
         POP DE
         POP HL
         RET
 
-; Input A is the original large-character code. E8DFH contains four sequential
-; 8x8 quadrants. Reproduce the original four bitmap and attribute cells in the
-; Spectrum shadow, then redraw those cells from that canonical state.
+; All 185 scenario-specific large glyphs are converted offline. Glyphs 0-88
+; live in U0 at 2880H and glyphs 89-184 in the retired bitmap area at 4000H.
 TVC_DRAW_LARGE:
+        CP 59H
+        JR C,TVC_DRAW_LARGE_LOW
+        SUB 59H
+        LD DE,TVC_LARGE_NATIVE_HIGH_RUN
+        JR TVC_DRAW_LARGE_ADDRESS
+TVC_DRAW_LARGE_LOW:
+        LD DE,TVC_LARGE_NATIVE_LOW_RUN
+TVC_DRAW_LARGE_ADDRESS:
         LD L,A
         LD H,00H
         ADD HL,HL
@@ -816,198 +1074,376 @@ TVC_DRAW_LARGE:
         ADD HL,HL
         ADD HL,HL
         ADD HL,HL
-        LD DE,0E8DFH
+        ADD HL,HL
         ADD HL,DE
-        LD DE,3000H
-        LD BC,0020H
-        LDIR
-        LD HL,(5CFEH)
-        LD A,L
-        LD C,H
-        LD (3026H),A
-        LD A,C
-        LD (3027H),A
+        LD (TVC_LARGE_SOURCE_PTR_RUN),HL
+        LD DE,(5CFEH)
+        LD A,E
+        LD (TVC_NATIVE_ROW_RUN),A
+        LD A,D
+        LD (TVC_NATIVE_COLUMN_RUN),A
 
-        LD A,(3027H)
+        LD A,(TVC_NATIVE_ROW_RUN)
+        LD C,D
+        LD A,(TVC_NATIVE_COLUMN_RUN)
         LD C,A
-        LD A,(3026H)           ; top-left bitmap
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        LD DE,3000H
-        CALL TVC_COPY_8_TO_SHADOW_RUN
-        LD A,(3027H)
-        LD C,A
-        INC C
-        LD A,(3026H)           ; top-right bitmap
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        LD DE,3008H
-        CALL TVC_COPY_8_TO_SHADOW_RUN
-        LD A,(3027H)
-        LD C,A
-        LD A,(3026H)           ; bottom-left bitmap
-        INC A
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        LD DE,3010H
-        CALL TVC_COPY_8_TO_SHADOW_RUN
-        LD A,(3027H)
-        LD C,A
-        INC C
-        LD A,(3026H)           ; bottom-right bitmap
-        INC A
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        LD DE,3018H
-        CALL TVC_COPY_8_TO_SHADOW_RUN
-
-        LD A,(5D00H)           ; four original Spectrum attribute cells
-        LD (3021H),A
-        LD A,(3027H)
-        LD C,A
-        LD A,(3026H)
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        CALL TVC_BITMAP_TO_ATTRIBUTE_RUN
-        LD A,(3021H)
+        LD A,(TVC_NATIVE_ROW_RUN)
+        CALL TVC_ATTRIBUTE_DEST_RUN
+        LD A,(5D00H)
         LD (HL),A
         INC HL
         LD (HL),A
-        LD A,(3027H)
-        LD C,A
-        LD A,(3026H)
-        INC A
-        CALL TVC_SHADOW_BITMAP_DEST_RUN
-        CALL TVC_BITMAP_TO_ATTRIBUTE_RUN
-        LD A,(3021H)
+        LD DE,0020H
+        ADD HL,DE
         LD (HL),A
-        INC HL
+        DEC HL
         LD (HL),A
 
-        LD A,(3027H)
+        LD A,(5D00H)
+        CALL TVC_PREPARE_NATIVE_COLOR_RUN
+        LD A,(0003H)
+        LD (TVC_NATIVE_MAPPER_RUN),A
+        AND 0DFH
+        LD (0003H),A
+        OUT (02H),A
+
+        LD HL,(TVC_LARGE_SOURCE_PTR_RUN)
+        LD A,(TVC_NATIVE_COLUMN_RUN)
         LD C,A
-        LD A,(3026H)           ; redraw all four cells from the shadow
-        CALL TVC_REDRAW_SHADOW_CELL_RUN
-        LD A,(3027H)
-        LD C,A
-        INC C
-        LD A,(3026H)
-        CALL TVC_REDRAW_SHADOW_CELL_RUN
-        LD A,(3027H)
-        LD C,A
-        LD A,(3026H)
+        LD A,(TVC_NATIVE_ROW_RUN)
+        CALL TVC_DRAW_NATIVE_AT_RUN
+        LD HL,(TVC_LARGE_SOURCE_PTR_RUN)
+        LD DE,0010H
+        ADD HL,DE
+        LD A,(TVC_NATIVE_COLUMN_RUN)
         INC A
-        CALL TVC_REDRAW_SHADOW_CELL_RUN
-        LD A,(3027H)
         LD C,A
-        INC C
-        LD A,(3026H)
+        LD A,(TVC_NATIVE_ROW_RUN)
+        CALL TVC_DRAW_NATIVE_AT_RUN
+        LD HL,(TVC_LARGE_SOURCE_PTR_RUN)
+        LD DE,0020H
+        ADD HL,DE
+        LD A,(TVC_NATIVE_COLUMN_RUN)
+        LD C,A
+        LD A,(TVC_NATIVE_ROW_RUN)
         INC A
-        CALL TVC_REDRAW_SHADOW_CELL_RUN
+        CALL TVC_DRAW_NATIVE_AT_RUN
+        LD HL,(TVC_LARGE_SOURCE_PTR_RUN)
+        LD DE,0030H
+        ADD HL,DE
+        LD A,(TVC_NATIVE_COLUMN_RUN)
+        INC A
+        LD C,A
+        LD A,(TVC_NATIVE_ROW_RUN)
+        INC A
+        CALL TVC_DRAW_NATIVE_AT_RUN
+        LD A,(TVC_NATIVE_MAPPER_RUN)
+        LD (0003H),A
+        OUT (02H),A
         RET
 
-; The original 8B7AH routine toggles a firing cross by XORing the center pixel
-; and offsets 1-5 along both axes through its direct Spectrum bitmap plotter.
-; Preserve that routine and its return state, then refresh the character cells
-; intersected by the resulting 11x11 bitmap change.
-TVC_TOGGLE_CROSS:
-        CALL 8B7AH
+; Native replacement for the common 844CH Spectrum pixel plotter. It keeps
+; the original logical collision byte at 5DA5H and applies set/clear/XOR to
+; the mapped ink/paper slots of the destination attribute cell.
+TVC_PLOT_PIXEL:
+        LD DE,(5DA3H)
+        LD HL,0808H
+        ADD HL,DE
+        LD A,L
+        LD (TVC_PIXEL_X_RUN),A
+        LD A,H
+        LD (TVC_PIXEL_Y_RUN),A
+        LD A,L
+        AND 07H
+        INC A
+        LD B,A
+        XOR A
+        SCF
+TVC_PLOT_SPECTRUM_MASK:
+        RRA
+        DJNZ TVC_PLOT_SPECTRUM_MASK
+        LD (TVC_PIXEL_SPECTRUM_MASK_RUN),A
+
+        LD A,(TVC_PIXEL_X_RUN)
+        RRCA
+        RRCA
+        RRCA
+        AND 1FH
+        LD C,A
+        LD A,(TVC_PIXEL_Y_RUN)
+        RRCA
+        RRCA
+        RRCA
+        AND 1FH
+        CALL TVC_ATTRIBUTE_DEST_RUN
+        LD A,(HL)
+        CALL TVC_SELECT_INK_RUN
+
+        LD A,(0003H)
+        LD (TVC_NATIVE_MAPPER_RUN),A
+        AND 0DFH
+        LD (0003H),A
+        OUT (02H),A
+        LD A,(TVC_PIXEL_Y_RUN)
+        LD L,A
+        LD H,00H
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        LD A,(TVC_PIXEL_X_RUN)
+        RRCA
+        RRCA
+        AND 3FH
+        LD E,A
+        LD D,00H
+        ADD HL,DE
+        LD DE,8000H
+        ADD HL,DE
+        LD (TVC_PIXEL_ADDRESS_RUN),HL
+
+        LD A,(TVC_PIXEL_X_RUN)
+        AND 03H
+        INC A
+        LD B,A
+        LD A,88H
+TVC_PLOT_TVC_MASK:
+        RRCA
+        DJNZ TVC_PLOT_TVC_MASK
+        LD (TVC_PIXEL_PLANES_MASK_RUN),A
+
+        LD HL,(TVC_PIXEL_ADDRESS_RUN)
+        LD A,(HL)
+        LD (TVC_PIXEL_OLD_BYTE_RUN),A
+        CALL TVC_PIXEL_CURRENT_SLOT_RUN
+        LD C,A
+        LD A,(TVC_INK_SLOT_RUN)
+        CP C
+        JR NZ,TVC_PLOT_NOT_INK
+        LD A,(TVC_PIXEL_SPECTRUM_MASK_RUN)
+        JR TVC_PLOT_COLLISION
+TVC_PLOT_NOT_INK:
+        XOR A
+TVC_PLOT_COLLISION:
+        LD B,A
+        LD A,(5DA6H)
+        OR A
+        JR Z,TVC_PLOT_SET
+        CP 01H
+        JR Z,TVC_PLOT_CLEAR
+        LD A,C
+        LD C,A
+        LD A,(TVC_INK_SLOT_RUN)
+        CP C
+        JR Z,TVC_PLOT_CLEAR
+TVC_PLOT_SET:
+        LD A,(TVC_INK_SLOT_RUN)
+        JR TVC_PLOT_WRITE
+TVC_PLOT_CLEAR:
+        LD A,(TVC_PAPER_SLOT_RUN)
+TVC_PLOT_WRITE:
+        CALL TVC_PIXEL_WRITE_SLOT_RUN
+        LD A,(5DA6H)
+        OR A
+        JR NZ,TVC_PLOT_RESTORE
+        LD A,B
+        LD (5DA5H),A
+TVC_PLOT_RESTORE:
+        LD HL,(TVC_PIXEL_ADDRESS_RUN)
+        LD A,(HL)               ; match the original updated-byte return
         PUSH AF
-        PUSH BC
-        PUSH DE
-        PUSH HL
-
-        LD A,(5D12H)           ; horizontal center; plotter adds an 8px margin
-        ADD A,03H              ; left edge: center + 8 - 5
-        RRCA
-        RRCA
-        RRCA
-        AND 1FH
-        LD (3028H),A
-        LD A,(5D12H)
-        ADD A,0DH              ; right edge: center + 8 + 5
-        RRCA
-        RRCA
-        RRCA
-        AND 1FH
-        LD (3029H),A
-
-        LD A,(5D11H)           ; vertical center
-        ADD A,03H              ; top edge: center + 8 - 5
-        RRCA
-        RRCA
-        RRCA
-        AND 1FH
-        LD (302AH),A
-        LD A,(5D11H)
-        ADD A,0DH              ; bottom edge: center + 8 + 5
-        RRCA
-        RRCA
-        RRCA
-        AND 1FH
-        LD (302BH),A
-
-TVC_TOGGLE_CROSS_ROW:
-        LD A,(3028H)
-        LD (302CH),A
-TVC_TOGGLE_CROSS_CELL:
-        LD C,A
-        LD A,(302AH)
-        CALL TVC_REDRAW_SHADOW_CELL_RUN
-        LD A,(302CH)
-        INC A
-        LD (302CH),A
-        LD C,A
-        LD A,(3029H)
-        INC A
-        CP C
-        LD A,(302CH)
-        JR NZ,TVC_TOGGLE_CROSS_CELL
-
-        LD A,(302AH)
-        INC A
-        LD (302AH),A
-        LD C,A
-        LD A,(302BH)
-        INC A
-        CP C
-        JR NZ,TVC_TOGGLE_CROSS_ROW
-
-        POP HL
-        POP DE
-        POP BC
+        LD A,(TVC_NATIVE_MAPPER_RUN)
+        LD (0003H),A
+        OUT (02H),A
         POP AF
         RET
 
-; Convert a Spectrum bitmap cell address in HL to its attribute address.
-TVC_BITMAP_TO_ATTRIBUTE:
-TVC_BITMAP_TO_ATTRIBUTE_RUN EQU 2000H+TVC_BITMAP_TO_ATTRIBUTE-TVC_SUPPORT_IMAGE
-        LD A,H
-        ADD A,07H              ; original conversion uses the final raster
-        RRCA
-        RRCA
-        RRCA
-        AND 03H
-        OR 58H
-        LD H,A
+; Return the current GRAPHICS 4 slot for the selected pixel in A.
+TVC_PIXEL_CURRENT_SLOT:
+TVC_PIXEL_CURRENT_SLOT_RUN EQU TVC_SUPPORT_RUN+TVC_PIXEL_CURRENT_SLOT-TVC_SUPPORT_IMAGE
+        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
+        LD C,A
+        AND 0F0H
+        LD B,A
+        LD A,(TVC_PIXEL_OLD_BYTE_RUN)
+        AND B
+        JR Z,TVC_PIXEL_NO_BIT_0
+        LD E,01H
+        JR TVC_PIXEL_BIT_1
+TVC_PIXEL_NO_BIT_0:
+        LD E,00H
+TVC_PIXEL_BIT_1:
+        LD A,C
+        AND 0FH
+        LD B,A
+        LD A,(TVC_PIXEL_OLD_BYTE_RUN)
+        AND B
+        JR Z,TVC_PIXEL_SLOT_DONE
+        SET 1,E
+TVC_PIXEL_SLOT_DONE:
+        LD A,E
         RET
 
-; Runtime address 2600H is deliberate: the high byte can be loaded directly
-; in the eight-row hot loop. The index is ink*64 + paper*16 + source nibble.
-; Each byte contains four GRAPHICS 4 pixels with source-one pixels using ink
-; and source-zero pixels using paper.
-        DEFS TVC_SUPPORT_IMAGE+0600H-$
-TVC_PACK_NIBBLE_TABLE:
-TVC_PACK_NIBBLE_TABLE_RUN EQU 2000H+TVC_PACK_NIBBLE_TABLE-TVC_SUPPORT_IMAGE
-        DB 00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H,00H ; ink 0, paper 0
-        DB F0H,E0H,D0H,C0H,B0H,A0H,90H,80H,70H,60H,50H,40H,30H,20H,10H,00H ; ink 0, paper 1
-        DB 0FH,0EH,0DH,0CH,0BH,0AH,09H,08H,07H,06H,05H,04H,03H,02H,01H,00H ; ink 0, paper 2
-        DB FFH,EEH,DDH,CCH,BBH,AAH,99H,88H,77H,66H,55H,44H,33H,22H,11H,00H ; ink 0, paper 3
-        DB 00H,10H,20H,30H,40H,50H,60H,70H,80H,90H,A0H,B0H,C0H,D0H,E0H,F0H ; ink 1, paper 0
-        DB F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H,F0H ; ink 1, paper 1
-        DB 0FH,1EH,2DH,3CH,4BH,5AH,69H,78H,87H,96H,A5H,B4H,C3H,D2H,E1H,F0H ; ink 1, paper 2
-        DB FFH,FEH,FDH,FCH,FBH,FAH,F9H,F8H,F7H,F6H,F5H,F4H,F3H,F2H,F1H,F0H ; ink 1, paper 3
-        DB 00H,01H,02H,03H,04H,05H,06H,07H,08H,09H,0AH,0BH,0CH,0DH,0EH,0FH ; ink 2, paper 0
-        DB F0H,E1H,D2H,C3H,B4H,A5H,96H,87H,78H,69H,5AH,4BH,3CH,2DH,1EH,0FH ; ink 2, paper 1
-        DB 0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH,0FH ; ink 2, paper 2
-        DB FFH,EFH,DFH,CFH,BFH,AFH,9FH,8FH,7FH,6FH,5FH,4FH,3FH,2FH,1FH,0FH ; ink 2, paper 3
-        DB 00H,11H,22H,33H,44H,55H,66H,77H,88H,99H,AAH,BBH,CCH,DDH,EEH,FFH ; ink 3, paper 0
-        DB F0H,F1H,F2H,F3H,F4H,F5H,F6H,F7H,F8H,F9H,FAH,FBH,FCH,FDH,FEH,FFH ; ink 3, paper 1
-        DB 0FH,1FH,2FH,3FH,4FH,5FH,6FH,7FH,8FH,9FH,AFH,BFH,CFH,DFH,EFH,FFH ; ink 3, paper 2
-        DB FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH,FFH ; ink 3, paper 3
+; Input A = target slot. Replace only the selected pixel in the VID0 byte.
+TVC_PIXEL_WRITE_SLOT:
+TVC_PIXEL_WRITE_SLOT_RUN EQU TVC_SUPPORT_RUN+TVC_PIXEL_WRITE_SLOT-TVC_SUPPORT_IMAGE
+        LD E,A
+        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
+        CPL
+        LD C,A
+        LD A,(TVC_PIXEL_OLD_BYTE_RUN)
+        AND C
+        LD C,A
+        LD A,E
+        BIT 0,A
+        JR Z,TVC_PIXEL_WRITE_BIT_1
+        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
+        AND 0F0H
+        OR C
+        LD C,A
+TVC_PIXEL_WRITE_BIT_1:
+        LD A,E
+        BIT 1,A
+        JR Z,TVC_PIXEL_WRITE_DONE
+        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
+        AND 0FH
+        OR C
+        LD C,A
+TVC_PIXEL_WRITE_DONE:
+        LD HL,(TVC_PIXEL_ADDRESS_RUN)
+        LD (HL),C
+        RET
+
+; Recolor one cell after the game changes only its Spectrum attribute. Input
+; A=row, C=column, B=old attribute, E=new attribute.
+TVC_RECOLOR_ATTRIBUTE_CELL:
+TVC_RECOLOR_ATTRIBUTE_CELL_RUN EQU TVC_SUPPORT_RUN+TVC_RECOLOR_ATTRIBUTE_CELL-TVC_SUPPORT_IMAGE
+        LD (TVC_NATIVE_ROW_RUN),A
+        LD A,C
+        LD (TVC_NATIVE_COLUMN_RUN),A
+        LD A,E
+        LD (TVC_RECOLOR_NEW_ATTRIBUTE_RUN),A
+        LD A,B
+        CALL TVC_SELECT_INK_RUN
+        LD A,(TVC_INK_SLOT_RUN)
+        LD (TVC_OLD_INK_SLOT_RUN),A
+        LD A,(TVC_PAPER_SLOT_RUN)
+        LD (TVC_OLD_PAPER_SLOT_RUN),A
+        LD A,(TVC_RECOLOR_NEW_ATTRIBUTE_RUN)
+        CALL TVC_SELECT_INK_RUN
+        LD A,(TVC_INK_SLOT_RUN)
+        LD C,A
+        LD A,(TVC_OLD_PAPER_SLOT_RUN)
+        CP C
+        JR NZ,TVC_RECOLOR_NO_SWAP
+        LD A,(TVC_PAPER_SLOT_RUN)
+        LD C,A
+        LD A,(TVC_OLD_INK_SLOT_RUN)
+        CP C
+        JR NZ,TVC_RECOLOR_NO_SWAP
+        CALL TVC_SLOT_PATTERN_RUN
+        LD C,A
+        LD A,(TVC_OLD_PAPER_SLOT_RUN)
+        CALL TVC_SLOT_PATTERN_RUN
+        XOR C
+        JR TVC_RECOLOR_SET_XOR
+TVC_RECOLOR_NO_SWAP:
+        XOR A                    ; collision fallback keeps the rendered pair
+TVC_RECOLOR_SET_XOR:
+        LD (TVC_RECOLOR_DELTA_RUN),A
+        LD A,(0003H)
+        LD (TVC_NATIVE_MAPPER_RUN),A
+        AND 0DFH
+        LD (0003H),A
+        OUT (02H),A
+        LD A,(TVC_NATIVE_COLUMN_RUN)
+        LD C,A
+        LD A,(TVC_NATIVE_ROW_RUN)
+        CALL TVC_VIDEO_DEST_RUN
+        EX DE,HL
+        LD A,(TVC_RECOLOR_DELTA_RUN)
+        LD C,A
+        LD B,08H
+TVC_RECOLOR_ROW:
+        LD A,(HL)
+        XOR C
+        LD (HL),A
+        INC HL
+        LD A,(HL)
+        XOR C
+        LD (HL),A
+        LD A,L
+        ADD A,3FH
+        LD L,A
+        JR NC,TVC_RECOLOR_NEXT
+        INC H
+TVC_RECOLOR_NEXT:
+        DJNZ TVC_RECOLOR_ROW
+        LD A,(TVC_NATIVE_MAPPER_RUN)
+        LD (0003H),A
+        OUT (02H),A
+        RET
+
+; Writable state kept inside the relocated support image. The native large
+; table begins at 2880H; the build rejects any overlap.
+TVC_INK_SLOT:
+TVC_INK_SLOT_RUN EQU TVC_SUPPORT_RUN+TVC_INK_SLOT-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_PAPER_SLOT:
+TVC_PAPER_SLOT_RUN EQU TVC_SUPPORT_RUN+TVC_PAPER_SLOT-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_NATIVE_SOURCE_PTR:
+TVC_NATIVE_SOURCE_PTR_RUN EQU TVC_SUPPORT_RUN+TVC_NATIVE_SOURCE_PTR-TVC_SUPPORT_IMAGE
+        DW 0000H
+TVC_LARGE_SOURCE_PTR:
+TVC_LARGE_SOURCE_PTR_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_SOURCE_PTR-TVC_SUPPORT_IMAGE
+        DW 0000H
+TVC_NATIVE_ROW:
+TVC_NATIVE_ROW_RUN EQU TVC_SUPPORT_RUN+TVC_NATIVE_ROW-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_NATIVE_COLUMN:
+TVC_NATIVE_COLUMN_RUN EQU TVC_SUPPORT_RUN+TVC_NATIVE_COLUMN-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_NATIVE_MAPPER:
+TVC_NATIVE_MAPPER_RUN EQU TVC_SUPPORT_RUN+TVC_NATIVE_MAPPER-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_NATIVE_BYTE_1:
+TVC_NATIVE_BYTE_1_RUN EQU TVC_SUPPORT_RUN+TVC_NATIVE_BYTE_1-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_NATIVE_BYTE_2:
+TVC_NATIVE_BYTE_2_RUN EQU TVC_SUPPORT_RUN+TVC_NATIVE_BYTE_2-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_PIXEL_X:
+TVC_PIXEL_X_RUN EQU TVC_SUPPORT_RUN+TVC_PIXEL_X-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_PIXEL_Y:
+TVC_PIXEL_Y_RUN EQU TVC_SUPPORT_RUN+TVC_PIXEL_Y-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_PIXEL_SPECTRUM_MASK:
+TVC_PIXEL_SPECTRUM_MASK_RUN EQU TVC_SUPPORT_RUN+TVC_PIXEL_SPECTRUM_MASK-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_PIXEL_PLANES_MASK:
+TVC_PIXEL_PLANES_MASK_RUN EQU TVC_SUPPORT_RUN+TVC_PIXEL_PLANES_MASK-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_PIXEL_OLD_BYTE:
+TVC_PIXEL_OLD_BYTE_RUN EQU TVC_SUPPORT_RUN+TVC_PIXEL_OLD_BYTE-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_PIXEL_ADDRESS:
+TVC_PIXEL_ADDRESS_RUN EQU TVC_SUPPORT_RUN+TVC_PIXEL_ADDRESS-TVC_SUPPORT_IMAGE
+        DW 0000H
+TVC_OLD_INK_SLOT:
+TVC_OLD_INK_SLOT_RUN EQU TVC_SUPPORT_RUN+TVC_OLD_INK_SLOT-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_OLD_PAPER_SLOT:
+TVC_OLD_PAPER_SLOT_RUN EQU TVC_SUPPORT_RUN+TVC_OLD_PAPER_SLOT-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_RECOLOR_DELTA:
+TVC_RECOLOR_DELTA_RUN EQU TVC_SUPPORT_RUN+TVC_RECOLOR_DELTA-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_RECOLOR_NEW_ATTRIBUTE:
+TVC_RECOLOR_NEW_ATTRIBUTE_RUN EQU TVC_SUPPORT_RUN+TVC_RECOLOR_NEW_ATTRIBUTE-TVC_SUPPORT_IMAGE
+        DB 00H
+
 TVC_SUPPORT_IMAGE_END:

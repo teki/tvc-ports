@@ -10,7 +10,15 @@ PORT_ROOT = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = PORT_ROOT.parents[1]
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 
-from media import read_tap_block_data, write_tvc_cas
+from media import read_tap_block_data, read_tvc_cas, write_tvc_cas
+from graphics import (
+    FONT_NATIVE_SIZE,
+    LARGE_HIGH_SIZE,
+    LARGE_LOW_SIZE,
+    extract_large_graphics,
+    extract_main_font,
+    split_large_graphics,
+)
 from rtvc import (
     parse_rtvc_toml,
     read_single_segment,
@@ -31,17 +39,24 @@ SECOND_BLOCK_CAS = WORK_DIR / "lasersqd_lscode_5e28_tvc.cas"
 LOADER_BOOTSTRAP_ASM = SRC_DIR / "lasersqd_loader.asm"
 LOADER_BOOTSTRAP_TOML = WORK_DIR / "lasersqd_loader_bootstrap.toml"
 TVC_SUPPORT_TOML = WORK_DIR / "lasersqd_tvc_support.toml"
+TVC_FONT_TOML = WORK_DIR / "lasersqd_tvc_font.toml"
 
 FIRST_BLOCK_ADDR = 0x7530
 SECOND_BLOCK_ADDR = 0x5E28
 FIRST_BLOCK_DISK_NAME = "LS1.CAS"
 SECOND_BLOCK_DISK_NAME = "LS2.CAS"
-TVC_SUPPORT_ADDR = 0x2000
+TVC_SUPPORT_ADDR = 0x2100
 MULTILOAD_BLOCKS = {
     "L64": 6,
     "L65": 7,
     "L66": 8,
     "L68": 9,
+}
+NATIVE_GRAPHICS_BLOCKS = {
+    "G64": 6,
+    "G65": 7,
+    "G66": 8,
+    "G68": 9,
 }
 
 
@@ -117,7 +132,7 @@ def build_second_block(second_block_toml, second_block_bin, support_addresses):
     )
 
 
-def build_loader_cas(first_block_size, second_block_size):
+def build_loader_cas(first_block_size, second_block_size, native_font):
     definitions = [
         "-d", f"FIRST_BLOCK_SIZE={first_block_size:04X}H",
         "-d", f"SECOND_BLOCK_SIZE={second_block_size:04X}H",
@@ -142,6 +157,36 @@ def build_loader_cas(first_block_size, second_block_size):
             str(LOADER_BOOTSTRAP_TOML),
         ]
     )
+    document = parse_rtvc_toml(LOADER_BOOTSTRAP_TOML)
+    symbols = document["symbols"]
+    font_start = symbols["TVC_NATIVE_FONT"]
+    font_end = symbols["TVC_NATIVE_FONT_END"]
+    if font_end - font_start != FONT_NATIVE_SIZE:
+        raise ValueError("loader native-font reservation has the wrong size")
+    if len(native_font) != FONT_NATIVE_SIZE:
+        raise ValueError("converted native font has the wrong size")
+    cas = read_tvc_cas(LOADER_CAS)
+    offset = font_start - cas.load_address
+    end = offset + len(native_font)
+    if offset < 0 or end > len(cas.payload):
+        raise ValueError("loader native-font reservation lies outside its payload")
+    payload = bytearray(cas.payload)
+    if any(payload[offset:end]):
+        raise ValueError("loader native-font reservation is not empty")
+    payload[offset:end] = native_font
+    write_tvc_cas(
+        LOADER_CAS,
+        payload,
+        file_type=cas.file_type,
+        auto_run=cas.auto_run,
+        load_address=cas.load_address,
+    )
+    write_single_segment(
+        TVC_FONT_TOML,
+        "offline-converted LSCODE printable font",
+        font_start,
+        native_font,
+    )
 
 
 def loader_support_addresses():
@@ -164,7 +209,7 @@ def loader_support_addresses():
         "TVC_DRAW_NORMAL",
         "TVC_DRAW_DOUBLE",
         "TVC_DRAW_LARGE",
-        "TVC_TOGGLE_CROSS",
+        "TVC_PLOT_PIXEL",
     )
     return {
         name: TVC_SUPPORT_ADDR + symbols[name] - source_base
@@ -185,37 +230,12 @@ def write_loader_support_toml():
             raise ValueError(
                 "overlapping TVC support relocation must use backward LDDR"
             )
-    pack_table = TVC_SUPPORT_ADDR + symbols["TVC_PACK_NIBBLE_TABLE"] - source_base
-    if pack_table != 0x2600:
-        raise ValueError(
-            f"TVC packing table moved to {pack_table:04X}H; expected 2600H"
-        )
-    table_start = symbols["TVC_PACK_NIBBLE_TABLE"] - segment["addr"]
-    actual_table = bytes(segment["bytes"][table_start:table_start + 0x100])
-    expected_table = bytearray()
-    for ink in range(4):
-        for paper in range(4):
-            for nibble in range(16):
-                mask = nibble << 4
-                inverse = (~mask) & 0xF0
-                packed = 0
-                if ink & 1:
-                    packed |= mask
-                if ink & 2:
-                    packed |= mask >> 4
-                if paper & 1:
-                    packed |= inverse
-                if paper & 2:
-                    packed |= inverse >> 4
-                expected_table.append(packed)
-    if actual_table != expected_table:
-        raise ValueError("TVC nibble packing table does not match slot encoding")
     start = symbols["TVC_SUPPORT_IMAGE"] - segment["addr"]
     end = symbols["TVC_SUPPORT_IMAGE_END"] - segment["addr"]
     runtime_end = TVC_SUPPORT_ADDR + symbols["TVC_SUPPORT_IMAGE_END"] - source_base
-    if runtime_end > 0x3000:
+    if runtime_end > symbols["TVC_LARGE_NATIVE_LOW_RUN"]:
         raise ValueError(
-            f"TVC support overlaps scratch RAM: end {runtime_end:04X}H"
+            f"TVC support overlaps native graphics RAM: end {runtime_end:04X}H"
         )
     write_single_segment(
         TVC_SUPPORT_TOML,
@@ -229,6 +249,7 @@ def build(build_dir, out_dir):
     global WORK_DIR, OUT_DIR, DISK
     global LOADER_CAS, FIRST_BLOCK_CAS, SECOND_BLOCK_CAS
     global LOADER_BOOTSTRAP_TOML, TVC_SUPPORT_TOML
+    global TVC_FONT_TOML
 
     WORK_DIR = build_dir
     OUT_DIR = out_dir
@@ -238,6 +259,7 @@ def build(build_dir, out_dir):
     SECOND_BLOCK_CAS = WORK_DIR / "lasersqd_lscode_5e28_tvc.cas"
     LOADER_BOOTSTRAP_TOML = WORK_DIR / "lasersqd_loader_bootstrap.toml"
     TVC_SUPPORT_TOML = WORK_DIR / "lasersqd_tvc_support.toml"
+    TVC_FONT_TOML = WORK_DIR / "lasersqd_tvc_font.toml"
 
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -249,8 +271,13 @@ def build(build_dir, out_dir):
     second_block_bin = WORK_DIR / "LS2TVC.BIN"
 
     build_first_block(first_block_toml, first_block_bin)
-    second_block_size = len(read_tap_block_data(SOURCES_DIR / "LASERSQD.TAP", 5))
-    build_loader_cas(first_block_bin.stat().st_size, second_block_size)
+    lscode = read_tap_block_data(SOURCES_DIR / "LASERSQD.TAP", 5)
+    second_block_size = len(lscode)
+    build_loader_cas(
+        first_block_bin.stat().st_size,
+        second_block_size,
+        extract_main_font(lscode),
+    )
     write_loader_support_toml()
     build_second_block(
         second_block_toml,
@@ -268,6 +295,16 @@ def build(build_dir, out_dir):
         cas_path = WORK_DIR / disk_name.lower()
         write_tvc_cas(cas_path, payload)
         multiload_cas[disk_name] = cas_path
+    native_graphics_cas = {}
+    for block_name, block_index in NATIVE_GRAPHICS_BLOCKS.items():
+        scenario = read_tap_block_data(SOURCES_DIR / "LASERSQD.TAP", block_index)
+        low, high = split_large_graphics(extract_large_graphics(scenario))
+        if len(low) != LARGE_LOW_SIZE or len(high) != LARGE_HIGH_SIZE:
+            raise ValueError(f"unexpected {block_name} native graphics split")
+        disk_name = f"{block_name}.CAS"
+        cas_path = WORK_DIR / disk_name.lower()
+        write_tvc_cas(cas_path, low + high)
+        native_graphics_cas[disk_name] = cas_path
     if second_block_bin.stat().st_size != second_block_size:
         raise ValueError("patched LSCODE size changed")
 
@@ -287,6 +324,11 @@ def build(build_dir, out_dir):
         ["put", f"{DISK}:{SECOND_BLOCK_DISK_NAME}", str(SECOND_BLOCK_CAS)],
     )
     for disk_name, cas_path in multiload_cas.items():
+        run(
+            "rtvc-dsk",
+            ["put", f"{DISK}:{disk_name}", str(cas_path)],
+        )
+    for disk_name, cas_path in native_graphics_cas.items():
         run(
             "rtvc-dsk",
             ["put", f"{DISK}:{disk_name}", str(cas_path)],
