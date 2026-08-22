@@ -77,6 +77,60 @@ The originating
 also shows why all later source-side `SP` assignments must be audited after
 choosing a safe target stack.
 
+## BASIC Retained Screen Characters and Command Injection
+
+The TVC has only graphics video RAM: displayed characters are rasterized into
+pixels rather than stored in hardware text memory. TVC BASIC 1.2 nevertheless
+keeps a software character image in U0 so its editor can recover the text on
+the current line.
+
+This was verified with the checked-in TVC 1.2 VT-DOS snapshot
+`rtvc/snapshots/boot12dos.rtvcsnap.zip`:
+
+- the 64-column character image begins at raw U0 `0100H`;
+- each character row occupies `40H` bytes;
+- the visible `42255  bytes free` text is present as ASCII at `01C0H`;
+- `ok` is at `0240H`; and
+- the empty command row immediately below it starts at `0280H`.
+
+Writing characters to this buffer does not draw pixels. It changes BASIC's
+retained representation, which is sufficient for submitting a command when
+the editor metadata agrees with it. In this snapshot, `0E56H` is the current
+line length: a before/after comparison showed it changing from `00H` to `01H`
+when one character was entered.
+
+For example, the following debugger sequence injects `load "*"` without
+synthesizing the command as keyboard input:
+
+```text
+pause
+write 0x0280 6C 6F 61 64 20 22 2A 22 bank=u0
+write 0x0E56 08 bank=u0
+continue
+key_press 13 10
+```
+
+Only Return is sent through the keyboard matrix. Use raw `u0` writes so the
+operation does not depend on the CPU's current page-0 mapping.
+
+Two tempting alternatives are insufficient:
+
+- writing only the screen row while leaving `0E56H=00H` makes BASIC accept an
+  empty line; and
+- writing the documented keyboard input buffer at `1831H` does not update the
+  editor's current-line state and is discarded when Return rebuilds it.
+
+The addresses above are verified for TVC BASIC 1.2 in the named VT-DOS boot
+snapshot. For another ROM, editor state, or scrolled screen, locate a known
+visible ASCII string in raw U0, determine the active 64-byte command row, and
+confirm the line-length variable with a before/after RAM comparison rather
+than assuming `0280H` is still the prompt.
+
+The originating end-to-end use is the
+[Laser Squad fast-boot validation](../ports/laser-squad/validation.md#build-for-interactive-testing),
+where this sequence successfully started the mounted DSK and reached the
+loading screen.
+
 ## Reusable Disk-write Probe
 
 [tvc-disk-write-probe.asm](tvc-disk-write-probe.asm) creates `PROBE.CAS`

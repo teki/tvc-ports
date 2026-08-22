@@ -15,7 +15,8 @@ from graphics import (
     FONT_NATIVE_SIZE,
     LARGE_HIGH_SIZE,
     LARGE_LOW_SIZE,
-    extract_large_graphics,
+    colorize_native,
+    extract_descriptor_large_graphics,
     extract_main_font,
     split_large_graphics,
 )
@@ -40,12 +41,14 @@ LOADER_BOOTSTRAP_ASM = SRC_DIR / "lasersqd_loader.asm"
 LOADER_BOOTSTRAP_TOML = WORK_DIR / "lasersqd_loader_bootstrap.toml"
 TVC_SUPPORT_TOML = WORK_DIR / "lasersqd_tvc_support.toml"
 TVC_FONT_TOML = WORK_DIR / "lasersqd_tvc_font.toml"
+TVC_HIDDEN_VIDEO_TOML = WORK_DIR / "lasersqd_tvc_hidden_video.toml"
 
 FIRST_BLOCK_ADDR = 0x7530
 SECOND_BLOCK_ADDR = 0x5E28
 FIRST_BLOCK_DISK_NAME = "LS1.CAS"
 SECOND_BLOCK_DISK_NAME = "LS2.CAS"
-TVC_SUPPORT_ADDR = 0x2100
+TVC_SUPPORT_ADDR = 0x2120
+TVC_HIDDEN_VIDEO_SIZE = 0x1000
 MULTILOAD_BLOCKS = {
     "L64": 6,
     "L65": 7,
@@ -159,6 +162,13 @@ def build_loader_cas(first_block_size, second_block_size, native_font):
     )
     document = parse_rtvc_toml(LOADER_BOOTSTRAP_TOML)
     symbols = document["symbols"]
+    hidden_start = symbols["TVC_NATIVE_FONT_SLOT1_SOURCE"]
+    hidden_code_start = symbols["TVC_HIDDEN_CODE_IMAGE"]
+    hidden_end = symbols["TVC_HIDDEN_CODE_IMAGE_END"]
+    if hidden_end - hidden_start > TVC_HIDDEN_VIDEO_SIZE:
+        raise ValueError("loader hidden VID0 payload exceeds the reserved 4 KiB")
+    if hidden_end - hidden_code_start > 0x400:
+        raise ValueError("loader hidden VID0 copy engine exceeds its 1 KiB reservation")
     font_start = symbols["TVC_NATIVE_FONT"]
     font_end = symbols["TVC_NATIVE_FONT_END"]
     if font_end - font_start != FONT_NATIVE_SIZE:
@@ -174,6 +184,19 @@ def build_loader_cas(first_block_size, second_block_size, native_font):
     if any(payload[offset:end]):
         raise ValueError("loader native-font reservation is not empty")
     payload[offset:end] = native_font
+    for slot in (1, 2):
+        variant = colorize_native(native_font, slot)
+        variant_start = symbols[f"TVC_NATIVE_FONT_SLOT{slot}_SOURCE"]
+        variant_end = symbols[f"TVC_NATIVE_FONT_SLOT{slot}_SOURCE_END"]
+        if variant_end - variant_start != FONT_NATIVE_SIZE:
+            raise ValueError(f"loader slot-{slot} font reservation has the wrong size")
+        variant_offset = variant_start - cas.load_address
+        variant_payload_end = variant_offset + len(variant)
+        if variant_offset < 0 or variant_payload_end > len(payload):
+            raise ValueError(f"loader slot-{slot} font reservation lies outside its payload")
+        if any(payload[variant_offset:variant_payload_end]):
+            raise ValueError(f"loader slot-{slot} font reservation is not empty")
+        payload[variant_offset:variant_payload_end] = variant
     write_tvc_cas(
         LOADER_CAS,
         payload,
@@ -209,12 +232,17 @@ def loader_support_addresses():
         "TVC_DRAW_NORMAL",
         "TVC_DRAW_DOUBLE",
         "TVC_DRAW_LARGE",
+        "TVC_DRAW_LARGE_GRID",
         "TVC_PLOT_PIXEL",
     )
-    return {
+    addresses = {
         name: TVC_SUPPORT_ADDR + symbols[name] - source_base
         for name in names
     }
+    addresses["TVC_DRAW_LARGE_LOOKUP_MAPPED"] = symbols[
+        "TVC_DRAW_LARGE_LOOKUP_MAPPED_RUN"
+    ]
+    return addresses
 
 
 def write_loader_support_toml():
@@ -223,16 +251,22 @@ def write_loader_support_toml():
     segment = document["segments"][0]
     source_base = symbols["TVC_SUPPORT_IMAGE"]
     source_end = symbols["TVC_SUPPORT_IMAGE_END"]
-    copy_direction = symbols["TVC_SUPPORT_COPY_DIRECTION"] - segment["addr"]
-    if source_base < TVC_SUPPORT_ADDR < source_end:
+    support_size = source_end - source_base
+    runtime_end = TVC_SUPPORT_ADDR + support_size
+    source_and_destination_overlap = (
+        source_base < runtime_end and TVC_SUPPORT_ADDR < source_end
+    )
+    if source_and_destination_overlap and source_base != TVC_SUPPORT_ADDR:
+        copy_direction = symbols["TVC_SUPPORT_COPY_DIRECTION"] - segment["addr"]
         instruction = bytes(segment["bytes"][copy_direction:copy_direction + 2])
-        if instruction != b"\xED\xB8":
+        expected = b"\xED\xB0" if TVC_SUPPORT_ADDR < source_base else b"\xED\xB8"
+        mnemonic = "forward LDIR" if expected == b"\xED\xB0" else "backward LDDR"
+        if instruction != expected:
             raise ValueError(
-                "overlapping TVC support relocation must use backward LDDR"
+                f"overlapping TVC support relocation must use {mnemonic}"
             )
     start = symbols["TVC_SUPPORT_IMAGE"] - segment["addr"]
     end = symbols["TVC_SUPPORT_IMAGE_END"] - segment["addr"]
-    runtime_end = TVC_SUPPORT_ADDR + symbols["TVC_SUPPORT_IMAGE_END"] - source_base
     if runtime_end > symbols["TVC_LARGE_NATIVE_LOW_RUN"]:
         raise ValueError(
             f"TVC support overlaps native graphics RAM: end {runtime_end:04X}H"
@@ -245,11 +279,27 @@ def write_loader_support_toml():
     )
 
 
+def write_hidden_video_toml():
+    document = parse_rtvc_toml(LOADER_BOOTSTRAP_TOML)
+    symbols = document["symbols"]
+    loader = read_tvc_cas(LOADER_CAS)
+    source_start = symbols["TVC_NATIVE_FONT_SLOT1_SOURCE"]
+    source_end = symbols["TVC_HIDDEN_CODE_IMAGE_END"]
+    offset = source_start - loader.load_address
+    payload = loader.payload[offset : offset + source_end - source_start]
+    write_single_segment(
+        TVC_HIDDEN_VIDEO_TOML,
+        "relocated hidden VID0 fonts and drawing code",
+        symbols["TVC_NATIVE_FONT_SLOT1_RUN"],
+        payload,
+    )
+
+
 def build(build_dir, out_dir):
     global WORK_DIR, OUT_DIR, DISK
     global LOADER_CAS, FIRST_BLOCK_CAS, SECOND_BLOCK_CAS
     global LOADER_BOOTSTRAP_TOML, TVC_SUPPORT_TOML
-    global TVC_FONT_TOML
+    global TVC_FONT_TOML, TVC_HIDDEN_VIDEO_TOML
 
     WORK_DIR = build_dir
     OUT_DIR = out_dir
@@ -260,6 +310,7 @@ def build(build_dir, out_dir):
     LOADER_BOOTSTRAP_TOML = WORK_DIR / "lasersqd_loader_bootstrap.toml"
     TVC_SUPPORT_TOML = WORK_DIR / "lasersqd_tvc_support.toml"
     TVC_FONT_TOML = WORK_DIR / "lasersqd_tvc_font.toml"
+    TVC_HIDDEN_VIDEO_TOML = WORK_DIR / "lasersqd_tvc_hidden_video.toml"
 
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -279,6 +330,7 @@ def build(build_dir, out_dir):
         extract_main_font(lscode),
     )
     write_loader_support_toml()
+    write_hidden_video_toml()
     build_second_block(
         second_block_toml,
         second_block_bin,
@@ -298,7 +350,7 @@ def build(build_dir, out_dir):
     native_graphics_cas = {}
     for block_name, block_index in NATIVE_GRAPHICS_BLOCKS.items():
         scenario = read_tap_block_data(SOURCES_DIR / "LASERSQD.TAP", block_index)
-        low, high = split_large_graphics(extract_large_graphics(scenario))
+        low, high = split_large_graphics(extract_descriptor_large_graphics(scenario))
         if len(low) != LARGE_LOW_SIZE or len(high) != LARGE_HIGH_SIZE:
             raise ValueError(f"unexpected {block_name} native graphics split")
         disk_name = f"{block_name}.CAS"

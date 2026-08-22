@@ -56,6 +56,15 @@
         ORG 60AFH
         JP %TVC_DRAW_LARGE%    ; original four-quadrant glyph renderer
 
+        ; The original 11-by-11 map loop is U1-resident and consumes U3 map
+        ; data. Map VID0 once around that loop and use its mapped-only lookup.
+        ORG 612AH
+        JP %TVC_DRAW_LARGE_GRID%
+        NOP
+
+        ORG 6150H
+        CALL %TVC_DRAW_LARGE_LOOKUP_MAPPED%
+
         ; Translate the common direct pixel plotter itself. This covers the
         ; firing cross plus every later set/clear/XOR and collision test.
         ORG 844CH

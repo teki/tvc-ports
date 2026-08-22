@@ -163,7 +163,7 @@ USR(6704)` entry. With breakpoints on both original entry addresses, the
 debugger first stopped at `7530H` after the named `LS1.CAS` load, then at
 `5E28H` after the first stage returned and the named `LS2.CAS` load completed.
 The restored `LS2TVC.BIN` is exactly `57F9H` bytes, matching the original
-`LSCODE` block. Current patches place TVC support in page-0 U0 RAM at `2100H`,
+`LSCODE` block. Current patches place TVC support in page-0 U0 RAM at `2120H`,
 change the immediate border port at `5E38H` from Spectrum `FEH` to TVC `00H`,
 and redirect the numeric-key and Spectrum graphics entry points to it.
 
@@ -202,7 +202,7 @@ system loads and calls its first overlay there.
 The original entry at `5E28H` disables interrupts, clears its workspace at
 `5B00H-5E25H`, selects a black Spectrum border, sets the stack to `5E39H`, and
 jumps to the original initializer at `B1C3H`. The current overlay retains that
-original workspace clear, places TVC support in page-0 U0 RAM at `2100H`, and
+original workspace clear, places TVC support in page-0 U0 RAM at `2120H`, and
 translates the border output to TVC port `00H`.
 
 An end-to-end TVC debugger trace reached these original routines in order:
@@ -215,7 +215,7 @@ An end-to-end TVC debugger trace reached these original routines in order:
 
 At the first input dispatch, `B0C7H` is zero, selecting the Spectrum keyboard
 routine at `B0E8H`. That entry now jumps into the relocatable support image
-which the assembly loader copies to `2100H`. It scans TVC rows 0 and 1 directly
+which the assembly loader copies to `2120H`. It scans TVC rows 0 and 1 directly
 through ports `03H`/`58H` and reproduces the original five active-low numeric
 key pairs (`0/5`, `9/4`, `8/3`, `7/2`, `6/1`). Debugger verification returned
 `FFH` with no key and `EFH` while TVC key `1` was held, matching the original
@@ -550,6 +550,15 @@ The Spectrum bitmap is 256 pixels wide, or 32 bytes per bitmap row. The TVC
 display layout is different, and the final port should patch or rewrite the
 graphics routines rather than relying on a global CRTC change.
 
+The loader changes only CRTC register 6 from 60 to 48 displayed character rows
+before the first title clear. With four rasters per row this gives the
+Spectrum-height 192 active lines and limits the displayed VID0 range to
+`0000H-2FFFH`. Registers 4, 5, and 9 remain unchanged, so PAL frame timing
+remains 314 raster lines; the start address and cursor interrupt position are
+also retained. This does not perform graphics conversion: the native TVC
+renderers remain responsible for the different pixel layout. Title and game
+clears now cover only the displayed 12 KiB and preserve `3000H-3FFFH`.
+
 The first pass uses GRAPHICS 4. Although TVC two-color mode has 512 physical
 pixels, both modes need two TVC bytes to represent one 8-pixel Spectrum source
 byte at the intended logical width. GRAPHICS 4 therefore keeps the Spectrum's
@@ -693,44 +702,83 @@ The converted memory layout on a 64K TVC is:
 
 | Range | Size | Use |
 | --- | ---: | --- |
-| `1AFAH-20F9H` | `0600H` | Loader-resident native font codes `20H-7FH` |
-| `2100H-2845H` | `0746H` | Relocated TVC runtime support |
+| `1B1EH-211DH` | `0600H` | Loader-resident slot-3 native font codes `20H-7FH` |
+| `2120H-2802H` | `06E3H` | Relocated TVC runtime support |
 | `2880H-3EBFH` | `1640H` | First 89 native large glyphs |
 | `4000H-57FFH` | `1800H` | Remaining 96 native large glyphs |
 | `5800H-5AFFH` | `0300H` | Spectrum attribute state retained for game logic |
 | `5B00H-FFFFH` | — | Original game workspace/code and scenario payload |
+
+The undisplayed tail of VID0 holds two more offline-colored font variants and
+their drawing code: slot 1 at `3000H-35FFH`, slot 2 at `3600H-3BFFH`, and 660
+bytes of code at `3C00H-3E93H`. The installed 3,732-byte payload fits inside
+the reserved 4 KiB. Installation happens before the first VT-DOS operation,
+and the build rejects overlap with the end of VID0.
 
 `SP=4000H` grows downward with `140H` (320 bytes) clear between the stack top
 and the low native table. The high table deliberately occupies the retired
 Spectrum bitmap-shadow range. No VID1 or VID2 storage is required: page 2 is
 mapped to VID0 only for the actual screen writes.
 
-The printable main font is embedded in `LOADER.CAS`. Each unchanged scenario
-payload has one generated `G64`/`G65`/`G66`/`G68` companion containing all 185
-converted large glyphs. The loader reads each companion as one file with two
-block reads into the non-contiguous ranges above. At runtime the original
-`B139H` font tail becomes a 64-entry ink/paper colorization table after the
-font has been converted offline.
+The printable main font and its slot-1/slot-2 black-paper variants are embedded
+in `LOADER.CAS`. Each unchanged scenario payload has one generated
+`G64`/`G65`/`G66`/`G68` companion containing 185 neutral native entries in the
+order of the scenario's `E79FH` descriptor table, not source-glyph order. This
+retains the same 11,840-byte allocation while allowing one source glyph to have
+different fixed descriptor attributes. The loader reads each companion as one
+file with two block reads into the non-contiguous ranges above.
 
-The normal, double-height, and four-quadrant renderers now consume native data
-directly. The original firing code still calls its common pixel plotter; the
+After a scenario load, a hidden-VID0 routine rebuilds those entries from the
+pristine `E79FH` descriptors and `E8DFH` Spectrum source into final TVC
+ink/paper bytes. Palette changes rebuild the table once; repeated screen clears
+with the same palette skip the work. The original `B139H` font tail remains a
+64-entry ink/paper colorization table for text and other dynamic drawing.
+
+The normal and double-height text renderers consume native font data directly,
+while the large renderer consumes scanline-ordered native tiles. The original
+firing code still calls its common pixel plotter; the
 patched body at `844CH` performs native set, clear, and XOR operations and
 preserves the collision result at `5DA5H`. Attribute-only selection changes
 recolor the existing native cell rather than reconstructing a Spectrum bitmap.
 
-Representative emulated Z80 cycle counts are:
+Representative emulated Z80 cycle counts for the non-map renderers remain:
 
 | Renderer | Spectrum original | Compatibility | Native |
 | --- | ---: | ---: | ---: |
-| Normal glyph | 655 | 2,414 | 1,272 |
-| Large four-quadrant glyph | 1,853 | 6,438 | 3,389 |
+| Normal glyph, black paper | 655 | 2,414 | 1,226 |
+| Large raw-glyph compatibility call | 1,853 | 6,438 | converted on demand |
 
-The native path is about 47% faster than the final compatibility path. It is
-still 1.94 times the Spectrum normal cost and 1.83 times its large-glyph cost,
-because every eight-pixel source row requires two TVC bytes plus dynamic
-ink/paper colorization. This is materially closer to the Spectrum target
-without consuming an extra video bank. The separately loaded, one-time title
-screen still uses its transitional compatibility shadow.
+The original `612AH` routine draws an entire 11-by-11 map. Its code is in U1
+and its map and descriptor data are in U3, so the port caches only the
+U2-resident descriptor pointer before mapping VID0. With the normal `E79FH`
+table, the mapped loop now indexes final-color native entries directly and
+leaves VID0 mapped across all 121 tiles. Temporary descriptor tables such as
+`E65FH`, plus direct `60AFH` glyph callers, convert one original glyph through
+the 64-byte scratch area at `3EC0H` to preserve their original semantics.
+
+A controlled `E79FH` draw from `lsql-fire.rtvcsnap.zip` now takes 269,472
+cycles, down from 380,671 for the four-quadrant descriptor-native path and
+645,618 for the earlier batched mask/recolor path. Each 16-by-16 tile is stored
+as sixteen contiguous four-byte scanlines, and one unrolled writer copies its
+64 bytes while advancing by the 64-byte TVC raster stride. The change saves
+111,199 cycles (29.2%) over the previous native path and 376,146 cycles (58.3%)
+over mask/recolor. The complete map takes 4.31 TVC frames, or 86.2 ms.
+
+The runtime palette rebuild transposes the original four 8-by-8 Spectrum
+quadrants into that scanline layout and takes 1,295,276 cycles in the same
+injected test; it is skipped when a clear reapplies an unchanged palette. A
+model comparison of all 11,840 resident bytes against the live descriptor
+attributes, source glyphs, collision fallback, and profile-3 color map matched
+exactly. The raw-glyph fallback also matched all 64 expected screen bytes and
+restored mapper shadow `0003H` to `B0H`.
+
+Common black-paper font draws select an offline-colored font and bypass runtime
+mask preparation. Inverse and non-black-paper text retains the generic
+mask/XOR path. Large map tiles no longer recolor per byte: their descriptor
+attribute is resolved at scenario/palette transition time. This requires no
+second 11,840-byte table and uses no VID1/VID2 memory on the 64K target. The
+separately loaded, one-time title screen still uses its transitional
+compatibility shadow.
 
 ### TVC interrupt stack isolation
 

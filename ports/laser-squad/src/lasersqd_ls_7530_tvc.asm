@@ -91,7 +91,7 @@ TVC_CLEAR_SCREEN:
         OUT (0CH),A            ; page 2 and display both select VID0
         LD HL,8000H
         LD DE,8001H
-        LD BC,3FFFH
+        LD BC,2FFFH
         LD (HL),00H
         LDIR                   ; VID0 is already mapped throughout the title
         XOR A

@@ -13,6 +13,25 @@
         BASIC_START
 
         DI
+        ; Switch to the 192-line paper before the first title clear, then
+        ; install the precolored fonts and direct-copy engine before VT-DOS
+        ; can reuse their temporary U0 source area.
+        LD A,06H
+        OUT (70H),A
+        LD A,30H
+        OUT (71H),A
+        LD A,(0003H)
+        PUSH AF
+        AND 0DFH
+        LD (0003H),A
+        OUT (02H),A
+        LD HL,TVC_NATIVE_FONT_SLOT1_SOURCE
+        LD DE,TVC_NATIVE_FONT_SLOT1_RUN
+        LD BC,TVC_HIDDEN_CODE_IMAGE_END-TVC_NATIVE_FONT_SLOT1_SOURCE
+        LDIR
+        POP AF
+        LD (0003H),A
+        OUT (02H),A
         XOR A
         LD (0B6BH),A            ; non-buffered file access
 
@@ -29,8 +48,8 @@
         CALL LOAD_BLOCK
         JR NZ,LOADER_DONE
 
-        ; The support source overlaps its 2100H destination. Copy from the
-        ; end so the relocation cannot overwrite source bytes still to read.
+        ; The support source overlaps its higher 2120H destination. Copy
+        ; backward so relocation cannot overwrite source bytes still to read.
         LD HL,TVC_SUPPORT_IMAGE_END
         DEC HL
         LD DE,TVC_SUPPORT_RUN+TVC_SUPPORT_IMAGE_END-TVC_SUPPORT_IMAGE
@@ -134,11 +153,15 @@ LOAD_NATIVE_GRAPHICS_CLOSE:
         OR A
         RET
 
-TVC_SUPPORT_RUN EQU 2100H
+TVC_SUPPORT_RUN EQU 2120H
 TVC_LARGE_NATIVE_LOW_RUN EQU 2880H
 TVC_LARGE_NATIVE_LOW_SIZE EQU 1640H ; 89 glyphs * 64 bytes
+TVC_LARGE_NATIVE_SCRATCH_RUN EQU 3EC0H ; one converted raw-glyph fallback
 TVC_LARGE_NATIVE_HIGH_RUN EQU 4000H
 TVC_LARGE_NATIVE_HIGH_SIZE EQU 1800H ; 96 glyphs * 64 bytes
+TVC_NATIVE_FONT_SLOT1_RUN EQU 0B000H
+TVC_NATIVE_FONT_SLOT2_RUN EQU 0B600H
+TVC_HIDDEN_CODE_RUN EQU 0BC00H
 
 ; Printable codes 20H-7FH from the original B139H-indexed font are converted
 ; offline. The build patches these reserved bytes in LOADER.CAS; they remain at
@@ -147,7 +170,7 @@ TVC_NATIVE_FONT:
         DEFS 0600H
 TVC_NATIVE_FONT_END:
 
-; Relocatable support copied to U0 RAM at 2100H after LSCODE is loaded. Page 0
+; Relocatable support copied to U0 RAM at 2120H after LSCODE is loaded. Page 0
 ; remains mapped to U0 in the BASIC/game map, giving the port enough room for
 ; the original keyboard and graphics entry-point replacements. Keep absolute
 ; references inside this image limited to fixed game/TVC addresses; branches
@@ -480,6 +503,12 @@ TVC_MULTILOAD_SELECTED:
         CALL LOAD_NATIVE_GRAPHICS
         OR A
         JP NZ,TVC_MULTILOAD_FAIL_RUN
+        LD A,0FFH
+        LD (TVC_LARGE_TABLE_PALETTE_RUN),A
+        LD A,01H
+        LD (TVC_LARGE_TABLE_LOADED_RUN),A
+        CALL TVC_REBUILD_LARGE_TABLE_RUN
+        XOR A
         LD (0B15BH),A           ; original success flag
         RET
 
@@ -545,7 +574,7 @@ TVC_APPLY_PALETTE_NEXT:
         DEC E
         JR NZ,TVC_APPLY_PALETTE_NEXT
         CALL TVC_BUILD_ATTRIBUTE_TABLE_RUN
-        RET
+        JP TVC_REBUILD_LARGE_TABLE_RUN
 
 TVC_PALETTES:
 TVC_PALETTES_RUN EQU TVC_SUPPORT_RUN+TVC_PALETTES-TVC_SUPPORT_IMAGE
@@ -559,8 +588,8 @@ TVC_PALETTE_ID_RUN EQU TVC_SUPPORT_RUN+TVC_PALETTE_ID-TVC_SUPPORT_IMAGE
         DB 00H                 ; start with the control-screen profile
 
 ; Build 64 delta/paper byte pairs at B239H, retiring the original Spectrum
-; font after its printable glyphs have been converted offline. Draw calls can
-; then reduce an attribute to one indexed lookup instead of mapping two colors.
+; font after its printable glyphs have been converted offline. Dynamic text
+; draws can then reduce an attribute to one lookup instead of mapping colors.
 TVC_BUILD_ATTRIBUTE_TABLE:
 TVC_BUILD_ATTRIBUTE_TABLE_RUN EQU TVC_SUPPORT_RUN+TVC_BUILD_ATTRIBUTE_TABLE-TVC_SUPPORT_IMAGE
         XOR A
@@ -591,6 +620,33 @@ TVC_BUILD_ATTRIBUTE_NEXT:
         JR NZ,TVC_BUILD_ATTRIBUTE_NEXT
         RET
 
+; Scenario Gxx files arrive in descriptor order as neutral slot-3 masks. Once
+; loaded, resolve all 185 entries to the current palette in one mapped pass.
+; Later palette transitions repeat that pass from the pristine Spectrum source
+; at E8DFH; the hot draw path therefore performs only direct native copies.
+TVC_REBUILD_LARGE_TABLE:
+TVC_REBUILD_LARGE_TABLE_RUN EQU TVC_SUPPORT_RUN+TVC_REBUILD_LARGE_TABLE-TVC_SUPPORT_IMAGE
+        LD A,(TVC_LARGE_TABLE_LOADED_RUN)
+        OR A
+        RET Z
+        LD A,(TVC_PALETTE_ID_RUN)
+        LD C,A
+        LD A,(TVC_LARGE_TABLE_PALETTE_RUN)
+        CP C
+        RET Z
+        LD A,C
+        LD (TVC_LARGE_TABLE_PALETTE_RUN),A
+        LD A,(0003H)
+        LD (TVC_NATIVE_MAPPER_RUN),A
+        AND 0DFH
+        LD (0003H),A
+        OUT (02H),A
+        CALL TVC_REBUILD_LARGE_TABLE_MAPPED_RUN
+        LD A,(TVC_NATIVE_MAPPER_RUN)
+        LD (0003H),A
+        OUT (02H),A
+        RET
+
 ; Replacement for the hardware-specific body at 602DH. The retired Spectrum
 ; bitmap area now holds native glyph data, so preserve only the game's 768-byte
 ; attribute state and clear VID0 directly.
@@ -615,9 +671,9 @@ TVC_CLEAR_SCREEN:
         OUT (02H),A
         LD HL,8000H
         LD DE,8001H
-        LD BC,3FFFH
+        LD BC,2FFFH
         LD (HL),00H             ; all current screen clears use paper black
-        LDIR                    ; clear the complete 16 KiB video bank
+        LDIR                    ; clear 12 KiB; preserve hidden native assets
         POP AF
         LD (0003H),A
         OUT (02H),A             ; restore U2 while leaving U3 mapped
@@ -690,9 +746,9 @@ TVC_SLOT_PATTERNS:
 TVC_SLOT_PATTERNS_RUN EQU TVC_SUPPORT_RUN+TVC_SLOT_PATTERNS-TVC_SUPPORT_IMAGE
         DB 00H,0F0H,0FH,0FFH
 
-; Prepare the two self-modifying native-mask operations for one attribute.
-; Native assets store set pixels as slot 3 and clear pixels as slot 0. The
-; final byte is paper XOR (mask AND (ink XOR paper)).
+; Prepare the native color pair for one attribute. Native assets store set
+; pixels as slot 3 and clear pixels as slot 0. The final byte is paper XOR
+; (mask AND (ink XOR paper)).
 TVC_PREPARE_NATIVE_COLOR:
 TVC_PREPARE_NATIVE_COLOR_RUN EQU TVC_SUPPORT_RUN+TVC_PREPARE_NATIVE_COLOR-TVC_SUPPORT_IMAGE
         AND 3FH
@@ -702,12 +758,12 @@ TVC_PREPARE_NATIVE_COLOR_RUN EQU TVC_SUPPORT_RUN+TVC_PREPARE_NATIVE_COLOR-TVC_SU
         LD HL,0B239H
         ADD HL,DE
         LD A,(HL)
-        LD (TVC_COPY_AND_1_RUN+1),A
-        LD (TVC_COPY_AND_2_RUN+1),A
+        LD (TVC_COPY_SAFE_AND_1_RUN+1),A
+        LD (TVC_COPY_SAFE_AND_2_RUN+1),A
         INC HL
         LD A,(HL)
-        LD (TVC_COPY_XOR_1_RUN+1),A
-        LD (TVC_COPY_XOR_2_RUN+1),A
+        LD (TVC_COPY_SAFE_XOR_1_RUN+1),A
+        LD (TVC_COPY_SAFE_XOR_2_RUN+1),A
         RET
 
 ; Input A = character row, C = byte column. Output HL = 5800H attribute.
@@ -738,147 +794,6 @@ TVC_VIDEO_DEST_RUN EQU TVC_SUPPORT_RUN+TVC_VIDEO_DEST-TVC_SUPPORT_IMAGE
         LD E,A
         RET
 
-; Copy one 8-row native cell. HL is 16 interleaved native mask bytes and DE
-; is the VID0 destination. Color constants are patched once per cell above.
-TVC_COPY_NATIVE_CELL:
-TVC_COPY_NATIVE_CELL_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_NATIVE_CELL-TVC_SUPPORT_IMAGE
-        LD B,08H
-TVC_COPY_NATIVE_ROW:
-        LD A,(HL)
-TVC_COPY_AND_1:
-TVC_COPY_AND_1_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_AND_1-TVC_SUPPORT_IMAGE
-        AND 00H
-TVC_COPY_XOR_1:
-TVC_COPY_XOR_1_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_XOR_1-TVC_SUPPORT_IMAGE
-        XOR 00H
-        LD (DE),A
-        INC HL
-        INC DE
-        LD A,(HL)
-TVC_COPY_AND_2:
-TVC_COPY_AND_2_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_AND_2-TVC_SUPPORT_IMAGE
-        AND 00H
-TVC_COPY_XOR_2:
-TVC_COPY_XOR_2_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_XOR_2-TVC_SUPPORT_IMAGE
-        XOR 00H
-        LD (DE),A
-        INC HL
-        LD A,E
-        ADD A,3FH               ; second byte to next 64-byte raster
-        LD E,A
-        JR NC,TVC_COPY_NATIVE_NEXT
-        INC D
-TVC_COPY_NATIVE_NEXT:
-        DJNZ TVC_COPY_NATIVE_ROW
-        RET
-
-; Slot-3 ink on black paper is already final TVC data. Seven unrolled row
-; advances make this common path a direct 16-byte native copy.
-TVC_COPY_NATIVE_DIRECT:
-TVC_COPY_NATIVE_DIRECT_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_NATIVE_DIRECT-TVC_SUPPORT_IMAGE
-        LDI
-        LDI
-        LD A,E
-        ADD A,3EH
-        LD E,A
-        JR NC,TVC_COPY_DIRECT_2
-        INC D
-TVC_COPY_DIRECT_2:
-        LDI
-        LDI
-        LD A,E
-        ADD A,3EH
-        LD E,A
-        JR NC,TVC_COPY_DIRECT_3
-        INC D
-TVC_COPY_DIRECT_3:
-        LDI
-        LDI
-        LD A,E
-        ADD A,3EH
-        LD E,A
-        JR NC,TVC_COPY_DIRECT_4
-        INC D
-TVC_COPY_DIRECT_4:
-        LDI
-        LDI
-        LD A,E
-        ADD A,3EH
-        LD E,A
-        JR NC,TVC_COPY_DIRECT_5
-        INC D
-TVC_COPY_DIRECT_5:
-        LDI
-        LDI
-        LD A,E
-        ADD A,3EH
-        LD E,A
-        JR NC,TVC_COPY_DIRECT_6
-        INC D
-TVC_COPY_DIRECT_6:
-        LDI
-        LDI
-        LD A,E
-        ADD A,3EH
-        LD E,A
-        JR NC,TVC_COPY_DIRECT_7
-        INC D
-TVC_COPY_DIRECT_7:
-        LDI
-        LDI
-        LD A,E
-        ADD A,3EH
-        LD E,A
-        JR NC,TVC_COPY_DIRECT_8
-        INC D
-TVC_COPY_DIRECT_8:
-        LDI
-        LDI
-        RET
-
-TVC_COPY_NATIVE_SELECTED:
-TVC_COPY_NATIVE_SELECTED_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_NATIVE_SELECTED-TVC_SUPPORT_IMAGE
-        LD A,(TVC_COPY_XOR_1_RUN+1)
-        OR A
-        JP NZ,TVC_COPY_NATIVE_CELL_RUN
-        LD A,(TVC_COPY_AND_1_RUN+1)
-        CP 0FFH
-        JP Z,TVC_COPY_NATIVE_DIRECT_RUN
-        JP TVC_COPY_NATIVE_CELL_RUN
-
-; Input HL = 16 native source bytes, A = row, C = column. Attribute state is
-; already stored at 5800H-5AFFH. Map VID0 only for the actual writes.
-TVC_DRAW_NATIVE_CELL:
-TVC_DRAW_NATIVE_CELL_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_NATIVE_CELL-TVC_SUPPORT_IMAGE
-        LD (TVC_NATIVE_SOURCE_PTR_RUN),HL
-        LD (TVC_NATIVE_ROW_RUN),A
-        LD A,C
-        LD (TVC_NATIVE_COLUMN_RUN),A
-        LD A,(TVC_NATIVE_ROW_RUN)
-        CALL TVC_ATTRIBUTE_DEST_RUN
-        LD A,(HL)
-        CALL TVC_PREPARE_NATIVE_COLOR_RUN
-        LD A,(0003H)
-        LD (TVC_NATIVE_MAPPER_RUN),A
-        AND 0DFH
-        LD (0003H),A
-        OUT (02H),A
-        CALL TVC_DRAW_NATIVE_CELL_MAPPED_RUN
-        LD A,(TVC_NATIVE_MAPPER_RUN)
-        LD (0003H),A
-        OUT (02H),A
-        RET
-
-; Draw with VID0 already mapped and the color immediates already prepared.
-TVC_DRAW_NATIVE_CELL_MAPPED:
-TVC_DRAW_NATIVE_CELL_MAPPED_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_NATIVE_CELL_MAPPED-TVC_SUPPORT_IMAGE
-        LD HL,(TVC_NATIVE_SOURCE_PTR_RUN)
-        LD A,(TVC_NATIVE_COLUMN_RUN)
-        LD C,A
-        LD A,(TVC_NATIVE_ROW_RUN)
-        CALL TVC_VIDEO_DEST_RUN
-        JP TVC_COPY_NATIVE_SELECTED_RUN
-
 ; Register-only mapped entry used by the four-quadrant renderer.
 ; Input HL=source, A=row, C=column.
 TVC_DRAW_NATIVE_AT:
@@ -900,8 +815,6 @@ TVC_DRAW_NORMAL:
         ADD HL,HL
         ADD HL,HL
         ADD HL,HL
-        LD DE,TVC_NATIVE_FONT
-        ADD HL,DE
         PUSH HL
         LD HL,(5CFEH)
         LD A,L
@@ -909,18 +822,76 @@ TVC_DRAW_NORMAL:
         CALL TVC_ATTRIBUTE_DEST_RUN
         LD A,(5D00H)
         LD (HL),A
+        LD C,A
+        AND 38H
+        JR NZ,TVC_DRAW_NORMAL_PREPARE_MASK
+        LD A,C
+        AND 3FH
+        ADD A,A
+        LD E,A
+        LD D,00H
+        LD HL,0B239H
+        ADD HL,DE
+        LD A,(HL)
+        CP 0F0H
+        JR Z,TVC_DRAW_NORMAL_SLOT1_PREPARED
+        CP 0FH
+        JR Z,TVC_DRAW_NORMAL_SLOT2_PREPARED
+        CP 0FFH
+        JR Z,TVC_DRAW_NORMAL_SLOT3_PREPARED
+TVC_DRAW_NORMAL_PREPARE_MASK:
+        LD A,C
         CALL TVC_PREPARE_NATIVE_COLOR_RUN
+        XOR A
+        JR TVC_DRAW_NORMAL_COLOR_READY
+TVC_DRAW_NORMAL_SLOT1_PREPARED:
+        LD A,01H
+        JR TVC_DRAW_NORMAL_COLOR_READY
+TVC_DRAW_NORMAL_SLOT2_PREPARED:
+        LD A,02H
+        JR TVC_DRAW_NORMAL_COLOR_READY
+TVC_DRAW_NORMAL_SLOT3_PREPARED:
+        LD A,03H
+TVC_DRAW_NORMAL_COLOR_READY:
+        LD C,A
         LD A,(0003H)
         LD (TVC_NATIVE_MAPPER_RUN),A
         AND 0DFH
         LD (0003H),A
         OUT (02H),A
         POP HL
+        LD A,C
+        OR A
+        JR Z,TVC_DRAW_NORMAL_MASK_SOURCE
+        DEC A
+        JR NZ,TVC_DRAW_NORMAL_SLOT2
+        LD DE,TVC_NATIVE_FONT_SLOT1_RUN
+        JR TVC_DRAW_NORMAL_DIRECT_SOURCE
+TVC_DRAW_NORMAL_SLOT2:
+        DEC A
+        JR NZ,TVC_DRAW_NORMAL_SLOT3
+        LD DE,TVC_NATIVE_FONT_SLOT2_RUN
+        JR TVC_DRAW_NORMAL_DIRECT_SOURCE
+TVC_DRAW_NORMAL_SLOT3:
+        LD DE,TVC_NATIVE_FONT
+        JR TVC_DRAW_NORMAL_DIRECT_SOURCE
+TVC_DRAW_NORMAL_DIRECT_SOURCE:
+        ADD HL,DE
         LD DE,(5CFEH)
         LD A,E
         LD C,D
         CALL TVC_VIDEO_DEST_RUN
-        CALL TVC_COPY_NATIVE_SELECTED_RUN
+        CALL TVC_COPY_NATIVE_DIRECT_RUN
+        JR TVC_DRAW_NORMAL_RESTORE
+TVC_DRAW_NORMAL_MASK_SOURCE:
+        LD DE,TVC_NATIVE_FONT
+        ADD HL,DE
+        LD DE,(5CFEH)
+        LD A,E
+        LD C,D
+        CALL TVC_VIDEO_DEST_RUN
+        CALL TVC_COPY_NATIVE_CELL_RUN
+TVC_DRAW_NORMAL_RESTORE:
         LD A,(TVC_NATIVE_MAPPER_RUN)
         LD (0003H),A
         OUT (02H),A
@@ -975,10 +946,10 @@ TVC_COPY_DOUBLE_ROW:
 TVC_COLOR_NATIVE_BYTE:
 TVC_COLOR_NATIVE_BYTE_RUN EQU TVC_SUPPORT_RUN+TVC_COLOR_NATIVE_BYTE-TVC_SUPPORT_IMAGE
         LD C,A
-        LD A,(TVC_COPY_AND_1_RUN+1)
+        LD A,(TVC_COPY_SAFE_AND_1_RUN+1)
         AND C
         LD C,A
-        LD A,(TVC_COPY_XOR_1_RUN+1)
+        LD A,(TVC_COPY_SAFE_XOR_1_RUN+1)
         XOR C
         RET
 
@@ -1056,87 +1027,39 @@ TVC_DRAW_DOUBLE:
         POP HL
         RET
 
-; All 185 scenario-specific large glyphs are converted offline. Glyphs 0-88
-; live in U0 at 2880H and glyphs 89-184 in the retired bitmap area at 4000H.
-TVC_DRAW_LARGE:
-        CP 59H
-        JR C,TVC_DRAW_LARGE_LOW
-        SUB 59H
-        LD DE,TVC_LARGE_NATIVE_HIGH_RUN
-        JR TVC_DRAW_LARGE_ADDRESS
-TVC_DRAW_LARGE_LOW:
-        LD DE,TVC_LARGE_NATIVE_LOW_RUN
-TVC_DRAW_LARGE_ADDRESS:
-        LD L,A
-        LD H,00H
-        ADD HL,HL
-        ADD HL,HL
-        ADD HL,HL
-        ADD HL,HL
-        ADD HL,HL
-        ADD HL,HL
-        ADD HL,DE
-        LD (TVC_LARGE_SOURCE_PTR_RUN),HL
-        LD DE,(5CFEH)
-        LD A,E
-        LD (TVC_NATIVE_ROW_RUN),A
-        LD A,D
-        LD (TVC_NATIVE_COLUMN_RUN),A
-
-        LD A,(TVC_NATIVE_ROW_RUN)
-        LD C,D
-        LD A,(TVC_NATIVE_COLUMN_RUN)
-        LD C,A
-        LD A,(TVC_NATIVE_ROW_RUN)
-        CALL TVC_ATTRIBUTE_DEST_RUN
-        LD A,(5D00H)
-        LD (HL),A
-        INC HL
-        LD (HL),A
-        LD DE,0020H
-        ADD HL,DE
-        LD (HL),A
-        DEC HL
-        LD (HL),A
-
-        LD A,(5D00H)
-        CALL TVC_PREPARE_NATIVE_COLOR_RUN
+; All 185 scenario-specific large descriptors are converted offline. Entries
+; 0-88 live in U0 at 2880H and entries 89-184 in U1 at 4000H.
+; The original 612AH 11-by-11 map loop runs entirely from U1 and reads its map
+; and descriptor data from U3. Cache the U2-resident descriptor pointer, map
+; VID0 once, then let the original loop call the hidden mapped-only renderer.
+TVC_DRAW_LARGE_GRID:
+TVC_DRAW_LARGE_GRID_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_LARGE_GRID-TVC_SUPPORT_IMAGE
+        XOR A
+        LD (0B715H),A
+        LD DE,(0B716H)
+        LD (TVC_LARGE_DESCRIPTOR_PTR_RUN),DE
         LD A,(0003H)
         LD (TVC_NATIVE_MAPPER_RUN),A
         AND 0DFH
         LD (0003H),A
         OUT (02H),A
+        CALL 612EH
+        LD A,(TVC_NATIVE_MAPPER_RUN)
+        LD (0003H),A
+        OUT (02H),A
+        RET
 
-        LD HL,(TVC_LARGE_SOURCE_PTR_RUN)
-        LD A,(TVC_NATIVE_COLUMN_RUN)
-        LD C,A
-        LD A,(TVC_NATIVE_ROW_RUN)
-        CALL TVC_DRAW_NATIVE_AT_RUN
-        LD HL,(TVC_LARGE_SOURCE_PTR_RUN)
-        LD DE,0010H
-        ADD HL,DE
-        LD A,(TVC_NATIVE_COLUMN_RUN)
-        INC A
-        LD C,A
-        LD A,(TVC_NATIVE_ROW_RUN)
-        CALL TVC_DRAW_NATIVE_AT_RUN
-        LD HL,(TVC_LARGE_SOURCE_PTR_RUN)
-        LD DE,0020H
-        ADD HL,DE
-        LD A,(TVC_NATIVE_COLUMN_RUN)
-        LD C,A
-        LD A,(TVC_NATIVE_ROW_RUN)
-        INC A
-        CALL TVC_DRAW_NATIVE_AT_RUN
-        LD HL,(TVC_LARGE_SOURCE_PTR_RUN)
-        LD DE,0030H
-        ADD HL,DE
-        LD A,(TVC_NATIVE_COLUMN_RUN)
-        INC A
-        LD C,A
-        LD A,(TVC_NATIVE_ROW_RUN)
-        INC A
-        CALL TVC_DRAW_NATIVE_AT_RUN
+TVC_DRAW_LARGE:
+        LD (TVC_RAW_LARGE_GLYPH_RUN),A
+        LD A,(0003H)
+        LD (TVC_NATIVE_MAPPER_RUN),A
+        AND 0DFH
+        LD (0003H),A
+        OUT (02H),A
+        LD A,(TVC_RAW_LARGE_GLYPH_RUN)
+        CALL TVC_CONVERT_RAW_LARGE_MAPPED_RUN
+        LD HL,TVC_LARGE_NATIVE_SCRATCH_RUN
+        CALL TVC_DRAW_LARGE_SOURCE_MAPPED_RUN
         LD A,(TVC_NATIVE_MAPPER_RUN)
         LD (0003H),A
         OUT (02H),A
@@ -1386,6 +1309,40 @@ TVC_RECOLOR_NEXT:
         OUT (02H),A
         RET
 
+; Proven looped fallback for paper/inverse attributes and large graphics.
+; Precolored black-paper fonts bypass this through the hidden direct copier.
+TVC_COPY_NATIVE_CELL_SAFE:
+TVC_COPY_NATIVE_CELL_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_NATIVE_CELL_SAFE-TVC_SUPPORT_IMAGE
+        LD B,08H
+TVC_COPY_SAFE_ROW:
+        LD A,(HL)
+TVC_COPY_SAFE_AND_1:
+TVC_COPY_SAFE_AND_1_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_AND_1-TVC_SUPPORT_IMAGE
+        AND 00H
+TVC_COPY_SAFE_XOR_1:
+TVC_COPY_SAFE_XOR_1_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_XOR_1-TVC_SUPPORT_IMAGE
+        XOR 00H
+        LD (DE),A
+        INC HL
+        INC DE
+        LD A,(HL)
+TVC_COPY_SAFE_AND_2:
+TVC_COPY_SAFE_AND_2_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_AND_2-TVC_SUPPORT_IMAGE
+        AND 00H
+TVC_COPY_SAFE_XOR_2:
+TVC_COPY_SAFE_XOR_2_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_XOR_2-TVC_SUPPORT_IMAGE
+        XOR 00H
+        LD (DE),A
+        INC HL
+        LD A,E
+        ADD A,3FH
+        LD E,A
+        JR NC,TVC_COPY_SAFE_NEXT
+        INC D
+TVC_COPY_SAFE_NEXT:
+        DJNZ TVC_COPY_SAFE_ROW
+        RET
+
 ; Writable state kept inside the relocated support image. The native large
 ; table begins at 2880H; the build rejects any overlap.
 TVC_INK_SLOT:
@@ -1399,6 +1356,21 @@ TVC_NATIVE_SOURCE_PTR_RUN EQU TVC_SUPPORT_RUN+TVC_NATIVE_SOURCE_PTR-TVC_SUPPORT_
         DW 0000H
 TVC_LARGE_SOURCE_PTR:
 TVC_LARGE_SOURCE_PTR_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_SOURCE_PTR-TVC_SUPPORT_IMAGE
+        DW 0000H
+TVC_LARGE_DESCRIPTOR_PTR:
+TVC_LARGE_DESCRIPTOR_PTR_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_DESCRIPTOR_PTR-TVC_SUPPORT_IMAGE
+        DW 0000H
+TVC_LARGE_TABLE_LOADED:
+TVC_LARGE_TABLE_LOADED_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_TABLE_LOADED-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_LARGE_TABLE_PALETTE:
+TVC_LARGE_TABLE_PALETTE_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_TABLE_PALETTE-TVC_SUPPORT_IMAGE
+        DB 0FFH
+TVC_RAW_LARGE_GLYPH:
+TVC_RAW_LARGE_GLYPH_RUN EQU TVC_SUPPORT_RUN+TVC_RAW_LARGE_GLYPH-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_LARGE_CONVERT_DEST:
+TVC_LARGE_CONVERT_DEST_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_CONVERT_DEST-TVC_SUPPORT_IMAGE
         DW 0000H
 TVC_NATIVE_ROW:
 TVC_NATIVE_ROW_RUN EQU TVC_SUPPORT_RUN+TVC_NATIVE_ROW-TVC_SUPPORT_IMAGE
@@ -1447,3 +1419,483 @@ TVC_RECOLOR_NEW_ATTRIBUTE_RUN EQU TVC_SUPPORT_RUN+TVC_RECOLOR_NEW_ATTRIBUTE-TVC_
         DB 00H
 
 TVC_SUPPORT_IMAGE_END:
+
+        ; The bootstrap copies these temporary precolored-font bytes into
+        ; hidden VID0 before any VT-DOS call can reuse this U0 source range.
+TVC_NATIVE_FONT_SLOT1_SOURCE:
+        DEFS 0600H
+TVC_NATIVE_FONT_SLOT1_SOURCE_END:
+TVC_NATIVE_FONT_SLOT2_SOURCE:
+        DEFS 0600H
+TVC_NATIVE_FONT_SLOT2_SOURCE_END:
+
+; Slot-3 ink on black paper and the two precolored font variants are already
+; final TVC data. Keep their direct copier and selector beside those assets in
+; the hidden VID0 tail, freeing scarce U0 support space.
+TVC_HIDDEN_CODE_IMAGE:
+TVC_COPY_NATIVE_DIRECT:
+TVC_COPY_NATIVE_DIRECT_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_COPY_NATIVE_DIRECT-TVC_HIDDEN_CODE_IMAGE
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_2
+        INC D
+TVC_COPY_DIRECT_2:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_3
+        INC D
+TVC_COPY_DIRECT_3:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_4
+        INC D
+TVC_COPY_DIRECT_4:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_5
+        INC D
+TVC_COPY_DIRECT_5:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_6
+        INC D
+TVC_COPY_DIRECT_6:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_7
+        INC D
+TVC_COPY_DIRECT_7:
+        LDI
+        LDI
+        LD A,E
+        ADD A,3EH
+        LD E,A
+        JR NC,TVC_COPY_DIRECT_8
+        INC D
+TVC_COPY_DIRECT_8:
+        LDI
+        LDI
+        RET
+
+; Copy one scanline-ordered 16x16 tile. HL is 64 contiguous source bytes and
+; DE is the first VID0 byte. Each four-byte row advances to the next 64-byte
+; TVC raster; all row control is unrolled out of the 121-tile hot path.
+TVC_COPY_LARGE_SCANLINES:
+TVC_COPY_LARGE_SCANLINES_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_COPY_LARGE_SCANLINES-TVC_HIDDEN_CODE_IMAGE
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_1
+        INC D
+TVC_COPY_LARGE_ROW_1:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_2
+        INC D
+TVC_COPY_LARGE_ROW_2:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_3
+        INC D
+TVC_COPY_LARGE_ROW_3:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_4
+        INC D
+TVC_COPY_LARGE_ROW_4:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_5
+        INC D
+TVC_COPY_LARGE_ROW_5:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_6
+        INC D
+TVC_COPY_LARGE_ROW_6:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_7
+        INC D
+TVC_COPY_LARGE_ROW_7:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_8
+        INC D
+TVC_COPY_LARGE_ROW_8:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_9
+        INC D
+TVC_COPY_LARGE_ROW_9:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_10
+        INC D
+TVC_COPY_LARGE_ROW_10:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_11
+        INC D
+TVC_COPY_LARGE_ROW_11:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_12
+        INC D
+TVC_COPY_LARGE_ROW_12:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_13
+        INC D
+TVC_COPY_LARGE_ROW_13:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_14
+        INC D
+TVC_COPY_LARGE_ROW_14:
+        LDI
+        LDI
+        LDI
+        LDI
+        LD A,E
+        ADD A,3CH
+        LD E,A
+        JR NC,TVC_COPY_LARGE_ROW_15
+        INC D
+TVC_COPY_LARGE_ROW_15:
+        LDI
+        LDI
+        LDI
+        LDI
+        RET
+
+TVC_COPY_NATIVE_SELECTED:
+TVC_COPY_NATIVE_SELECTED_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_COPY_NATIVE_SELECTED-TVC_HIDDEN_CODE_IMAGE
+        LD A,(TVC_COPY_SAFE_XOR_1_RUN+1)
+        OR A
+        JP NZ,TVC_COPY_NATIVE_CELL_RUN
+        LD A,(TVC_COPY_SAFE_AND_1_RUN+1)
+        CP 0FFH
+        JP Z,TVC_COPY_NATIVE_DIRECT_RUN
+        JP TVC_COPY_NATIVE_CELL_RUN
+
+; Batch-only replacement for the original 616EH tile descriptor lookup. The
+; scenario map's E79FH table indexes the precolored native table directly.
+; Temporary descriptor tables (notably E65FH) retain a converted raw fallback.
+TVC_DRAW_LARGE_LOOKUP_MAPPED:
+TVC_DRAW_LARGE_LOOKUP_MAPPED_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_DRAW_LARGE_LOOKUP_MAPPED-TVC_HIDDEN_CODE_IMAGE
+        PUSH AF
+        LD H,00H
+        LD L,A
+        ADD HL,HL
+        LD DE,(TVC_LARGE_DESCRIPTOR_PTR_RUN)
+        ADD HL,DE
+        LD A,(HL)
+        LD (5D00H),A
+        INC HL
+        LD A,(HL)
+        LD C,A
+        LD HL,(TVC_LARGE_DESCRIPTOR_PTR_RUN)
+        LD DE,0E79FH
+        OR A
+        SBC HL,DE
+        JR NZ,TVC_DRAW_LARGE_LOOKUP_RAW
+        POP AF
+        JR TVC_DRAW_LARGE_DESCRIPTOR_MAPPED
+TVC_DRAW_LARGE_LOOKUP_RAW:
+        POP AF
+        LD A,C
+        CALL TVC_CONVERT_RAW_LARGE_MAPPED_RUN
+        LD HL,TVC_LARGE_NATIVE_SCRATCH_RUN
+        JR TVC_DRAW_LARGE_SOURCE_MAPPED
+
+; A is a fixed E79FH descriptor index. Resolve its precolored native source.
+TVC_DRAW_LARGE_DESCRIPTOR_MAPPED:
+        CP 59H
+        JR C,TVC_DRAW_LARGE_DESCRIPTOR_LOW
+        SUB 59H
+        LD DE,TVC_LARGE_NATIVE_HIGH_RUN
+        JR TVC_DRAW_LARGE_DESCRIPTOR_ADDRESS
+TVC_DRAW_LARGE_DESCRIPTOR_LOW:
+        LD DE,TVC_LARGE_NATIVE_LOW_RUN
+TVC_DRAW_LARGE_DESCRIPTOR_ADDRESS:
+        LD L,A
+        LD H,00H
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,DE
+
+; Draw one final-color 16x16 native source. VID0 must already be mapped.
+TVC_DRAW_LARGE_SOURCE_MAPPED:
+TVC_DRAW_LARGE_SOURCE_MAPPED_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_DRAW_LARGE_SOURCE_MAPPED-TVC_HIDDEN_CODE_IMAGE
+        PUSH HL
+        LD DE,(5CFEH)
+        LD A,E
+        LD C,D
+        CALL TVC_ATTRIBUTE_DEST_RUN
+        LD A,(5D00H)
+        LD (HL),A
+        INC HL
+        LD (HL),A
+        LD DE,0020H
+        ADD HL,DE
+        LD (HL),A
+        DEC HL
+        LD (HL),A
+
+        POP HL
+        LD DE,(5CFEH)
+        LD A,E
+        LD C,D
+        CALL TVC_VIDEO_DEST_RUN
+        JP TVC_COPY_LARGE_SCANLINES_RUN
+
+; Convert one original Spectrum glyph to the 64-byte U0 scratch buffer using
+; its current attribute. This is only for non-map callers and temporary
+; descriptor tables; the main E79FH map never executes it.
+TVC_CONVERT_RAW_LARGE_MAPPED:
+TVC_CONVERT_RAW_LARGE_MAPPED_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_CONVERT_RAW_LARGE_MAPPED-TVC_HIDDEN_CODE_IMAGE
+        LD (TVC_RAW_LARGE_GLYPH_RUN),A
+        LD A,(5D00H)
+        CALL TVC_SET_LARGE_CONVERT_COLOR_RUN
+        LD A,(TVC_RAW_LARGE_GLYPH_RUN)
+        LD L,A
+        LD H,00H
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        LD DE,0E8DFH
+        ADD HL,DE
+        LD DE,TVC_LARGE_NATIVE_SCRATCH_RUN
+        JP TVC_CONVERT_LARGE_SOURCE_RUN
+
+; Recreate all final-color descriptor entries from pristine E79FH/E8DFH data.
+TVC_REBUILD_LARGE_TABLE_MAPPED:
+TVC_REBUILD_LARGE_TABLE_MAPPED_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_REBUILD_LARGE_TABLE_MAPPED-TVC_HIDDEN_CODE_IMAGE
+        LD IX,0E79FH
+        LD IY,TVC_LARGE_NATIVE_LOW_RUN
+        LD A,0B9H
+        LD (TVC_LARGE_REBUILD_COUNT_RUN),A
+TVC_REBUILD_LARGE_NEXT:
+        LD A,(TVC_LARGE_REBUILD_COUNT_RUN)
+        CP 60H
+        JR NZ,TVC_REBUILD_LARGE_DEST_READY
+        LD IY,TVC_LARGE_NATIVE_HIGH_RUN
+TVC_REBUILD_LARGE_DEST_READY:
+        LD A,(IX+00H)
+        CALL TVC_SET_LARGE_CONVERT_COLOR_RUN
+        LD A,(IX+01H)
+        LD L,A
+        LD H,00H
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,HL
+        LD DE,0E8DFH
+        ADD HL,DE
+        PUSH IY
+        POP DE
+        CALL TVC_CONVERT_LARGE_SOURCE_RUN
+        PUSH DE
+        POP IY
+        INC IX
+        INC IX
+        LD A,(TVC_LARGE_REBUILD_COUNT_RUN)
+        DEC A
+        LD (TVC_LARGE_REBUILD_COUNT_RUN),A
+        JR NZ,TVC_REBUILD_LARGE_NEXT
+        RET
+
+; Patch the converter's delta/paper immediates for one Spectrum attribute.
+TVC_SET_LARGE_CONVERT_COLOR:
+TVC_SET_LARGE_CONVERT_COLOR_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_SET_LARGE_CONVERT_COLOR-TVC_HIDDEN_CODE_IMAGE
+        CALL TVC_SELECT_INK_RUN
+        LD A,(TVC_INK_SLOT_RUN)
+        CALL TVC_SLOT_PATTERN_RUN
+        LD C,A
+        LD A,(TVC_PAPER_SLOT_RUN)
+        CALL TVC_SLOT_PATTERN_RUN
+        LD (TVC_CONVERT_LARGE_PAPER_1_RUN+1),A
+        LD (TVC_CONVERT_LARGE_PAPER_2_RUN+1),A
+        XOR C
+        LD (TVC_CONVERT_LARGE_DELTA_1_RUN+1),A
+        LD (TVC_CONVERT_LARGE_DELTA_2_RUN+1),A
+        RET
+
+; Expand four quadrant-ordered Spectrum blocks into sixteen contiguous
+; four-byte native scanlines. Input HL=Spectrum source, DE=native destination.
+TVC_CONVERT_LARGE_SOURCE:
+TVC_CONVERT_LARGE_SOURCE_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_CONVERT_LARGE_SOURCE-TVC_HIDDEN_CODE_IMAGE
+        LD (TVC_LARGE_CONVERT_DEST_RUN),DE
+        CALL TVC_CONVERT_LARGE_QUADRANT_RUN
+        LD DE,(TVC_LARGE_CONVERT_DEST_RUN)
+        INC DE
+        INC DE
+        CALL TVC_CONVERT_LARGE_QUADRANT_RUN
+        LD DE,(TVC_LARGE_CONVERT_DEST_RUN)
+        LD A,E
+        ADD A,20H
+        LD E,A
+        JR NC,TVC_CONVERT_LARGE_BOTTOM_LEFT
+        INC D
+TVC_CONVERT_LARGE_BOTTOM_LEFT:
+        CALL TVC_CONVERT_LARGE_QUADRANT_RUN
+        LD DE,(TVC_LARGE_CONVERT_DEST_RUN)
+        LD A,E
+        ADD A,22H
+        LD E,A
+        JR NC,TVC_CONVERT_LARGE_BOTTOM_RIGHT
+        INC D
+TVC_CONVERT_LARGE_BOTTOM_RIGHT:
+        CALL TVC_CONVERT_LARGE_QUADRANT_RUN
+        LD DE,(TVC_LARGE_CONVERT_DEST_RUN)
+        LD A,E
+        ADD A,40H
+        LD E,A
+        RET NC
+        INC D
+        RET
+
+TVC_CONVERT_LARGE_QUADRANT:
+TVC_CONVERT_LARGE_QUADRANT_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_CONVERT_LARGE_QUADRANT-TVC_HIDDEN_CODE_IMAGE
+        LD B,08H
+TVC_CONVERT_LARGE_BYTE:
+        LD A,(HL)
+        INC HL
+        LD C,A
+        AND 0F0H
+        PUSH BC
+        LD B,A
+        RRCA
+        RRCA
+        RRCA
+        RRCA
+        OR B
+TVC_CONVERT_LARGE_DELTA_1:
+TVC_CONVERT_LARGE_DELTA_1_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_CONVERT_LARGE_DELTA_1-TVC_HIDDEN_CODE_IMAGE
+        AND 00H
+TVC_CONVERT_LARGE_PAPER_1:
+TVC_CONVERT_LARGE_PAPER_1_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_CONVERT_LARGE_PAPER_1-TVC_HIDDEN_CODE_IMAGE
+        XOR 00H
+        LD (DE),A
+        INC DE
+        LD A,C
+        AND 0FH
+        LD B,A
+        RLCA
+        RLCA
+        RLCA
+        RLCA
+        OR B
+TVC_CONVERT_LARGE_DELTA_2:
+TVC_CONVERT_LARGE_DELTA_2_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_CONVERT_LARGE_DELTA_2-TVC_HIDDEN_CODE_IMAGE
+        AND 00H
+TVC_CONVERT_LARGE_PAPER_2:
+TVC_CONVERT_LARGE_PAPER_2_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_CONVERT_LARGE_PAPER_2-TVC_HIDDEN_CODE_IMAGE
+        XOR 00H
+        LD (DE),A
+        INC DE
+        INC DE
+        INC DE
+        POP BC
+        DJNZ TVC_CONVERT_LARGE_BYTE
+        RET
+
+TVC_LARGE_REBUILD_COUNT:
+TVC_LARGE_REBUILD_COUNT_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_LARGE_REBUILD_COUNT-TVC_HIDDEN_CODE_IMAGE
+        DB 00H
+TVC_HIDDEN_CODE_IMAGE_END:

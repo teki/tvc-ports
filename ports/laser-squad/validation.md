@@ -30,6 +30,20 @@ python3 build.py
 
 Start `rtvc` with `dist/lasersqd_tvc.dsk`.
 
+For the fast VT-DOS snapshot, mount the generated DSK in both A and B because
+the snapshot preserves drive B as the selected controller drive:
+
+```sh
+rtvc -d dist/lasersqd_tvc.dsk -d dist/lasersqd_tvc.dsk \
+  ../../../rtvc/snapshots/boot12dos.rtvcsnap.zip
+```
+
+At the BASIC prompt enter `load "*"` and press Return.
+
+For debugger automation, use the shared
+[TVC BASIC screen-character injection procedure](../../knowledge/tvc.md#basic-retained-screen-characters-and-command-injection).
+Do not synthesize the command as a sequence of key events.
+
 ## Known-good Emulator Scenario
 
 1. Boot/load the generated DSK.
@@ -76,22 +90,39 @@ runtime loading.
   selection call must advance.
 - **Interrupt/drawing:** allow the shopping screen to draw with interrupts
   active. Coordinates must remain in range, the stack must stay below `4000H`,
-  and the installed support image at `2100H-2845H` must not be modified by
+  and the installed support image at `2120H-2802H` must not be modified by
   drawing.
 - **Gameplay input:** verify `Q`, `A`, `O`, `P`, and Space through the
   store/tactical control path, not only in menus.
 - **Firing crosshair:** from `lsql-fire.rtvcsnap.zip`, move or blink the firing
   cursor. Its original 21-pixel XOR cross must appear in cyan at the target
   position, and toggling it must not recolor or damage the trajectory circles.
-- **Drawing performance:** representative synthetic calls using the firing
-  snapshot inputs take 1,272 emulated Z80 cycles for normal drawing and 3,389
-  for large drawing. The last compatibility implementation took 2,414 and
-  6,438 cycles; the pristine Spectrum routines take 655 and 1,853. Recheck all
-  three measurements when modifying the native writers.
+- **Drawing performance:** a synthetic black-paper normal glyph takes 1,226
+  emulated Z80 cycles; the pristine Spectrum routine takes 655. Raw large-glyph
+  and temporary-descriptor callers now use the correctness fallback at U0
+  `3EC0H`; keep those off the main map path.
+- **Descriptor-native map draw:** the `612AH` 11-by-11 loop must perform one
+  VID0 map and one restore, with mapper shadow `0003H` returning to `B0H`.
+  From `lsql-fire.rtvcsnap.zip`, the old batched mask/recolor path takes 645,618
+  cycles, the four-quadrant descriptor path takes 380,671, and the scanline-
+  ordered unrolled path takes 269,472 cycles (4.31 frames, 86.2 ms). The
+  11,840-byte resident table must match a model built from the live `E79FH`
+  attributes, `E8DFH` glyphs, active palette map, and collision fallback; the
+  measured profile-3 comparison matched all bytes. A controlled raw glyph must
+  also match all 64 screen bytes and restore mapper shadow `0003H` to `B0H`.
+  Reapplying an unchanged palette must skip the 1,295,276-cycle table rebuild.
+- **CRTC paper height:** from the start of the loader, CRTC R6 must be `30H`,
+  producing 48 four-raster rows (192 active lines). The title, scenario, and
+  control-selection screens must render cleanly; frame timing, start address,
+  and cursor IRQ settings remain unchanged.
 - **Support relocation:** the loader-resident support source at
-  `20FAH-283FH` overlaps its `2100H-2845H` runtime destination. The loader must
-  use `LDDR`, and the installed 1,862-byte image must match the generated
-  support TOML before entering the main game.
+  `211EH-2800H` overlaps its higher `2120H-2802H` runtime destination. The
+  loader must use backward `LDDR`, and the installed 1,763-byte image must
+  match the generated support TOML before entering the main game.
+- **Hidden native fonts:** before the first VT-DOS call, VID0 offsets
+  `3000H-35FFH` and `3600H-3BFFH` must match the offline slot-1/slot-2 font
+  variants, and `3C00H-3E93H` must match the hidden drawing/conversion code.
+  Screen clears must leave the complete `3000H-3FFFH` tail unchanged.
 - **Multi-load:** verify the direct payload at `B621H-FFFFH` matches the
   selected original TAP block. Verify the matching `Gxx.CAS` is then loaded as
   `1640H` bytes at `2880H` and `1800H` bytes at `4000H`, with both ranges equal

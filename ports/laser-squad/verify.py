@@ -16,10 +16,17 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 import build as laser_build
 from graphics import (
     FONT_NATIVE_SIZE,
+    LARGE_DESCRIPTOR_ADDR,
+    LARGE_DESCRIPTOR_SIZE,
+    LARGE_GLYPH_COUNT,
     LARGE_HIGH_SIZE,
     LARGE_LOW_SIZE,
+    LARGE_SOURCE_ADDR,
+    LARGE_SOURCE_SIZE,
+    SCENARIO_ADDR,
+    colorize_native,
     convert_bitmap_byte,
-    extract_large_graphics,
+    convert_large_glyph,
     extract_main_font,
     split_large_graphics,
 )
@@ -28,13 +35,13 @@ from rtvc import parse_rtvc_toml, run_tool
 
 
 EXPECTED_PATCHED_CAS = {
-    "LOADER.CAS": ("lasersqd_loader.cas", "caee2031e70a52c61ad52f913c64be5fdb370f290aa59f468b1a8ca5c219dafd"),
-    "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "3db8073b5e2ec7413b18856a9040327bb72518b2c85513d49d457c9eed7db934"),
-    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "6c9172655cc6017423434ad8f210153ff485e53c278cefc7f593b5de0bac864f"),
+    "LOADER.CAS": ("lasersqd_loader.cas", "eae203360049c07b376b37b20fd80da0c127bdd897d595027e4ee2a888728058"),
+    "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "3b8efc05885080fd82704b01b2cc7b3604530871c6637f4ad4fb80235dcddf8f"),
+    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "97200003388139198173b1a7038eddabb30c3e162b12eba2de0df0b144fbee51"),
 }
 
 EXPECTED_PATCHED_SIZES = {
-    "LOADER.CAS": 3809,
+    "LOADER.CAS": 7478,
     "LS1.CAS": 2320,
     "LS2.CAS": 22665,
 }
@@ -46,6 +53,30 @@ def reference_bitmap_byte(value):
     for pixel in range(8):
         if value & (0x80 >> pixel):
             output[pixel // 4] |= 0x88 >> (pixel % 4)
+    return bytes(output)
+
+
+def reference_descriptor_graphics(scenario):
+    """Build the expected table independently in scenario-descriptor order."""
+    descriptor_start = LARGE_DESCRIPTOR_ADDR - SCENARIO_ADDR
+    source_start = LARGE_SOURCE_ADDR - SCENARIO_ADDR
+    descriptors = scenario[
+        descriptor_start:descriptor_start + LARGE_DESCRIPTOR_SIZE
+    ]
+    source = scenario[source_start:source_start + LARGE_SOURCE_SIZE]
+    if len(descriptors) != LARGE_DESCRIPTOR_SIZE or len(source) != LARGE_SOURCE_SIZE:
+        raise ValueError("scenario is missing large-graphics data")
+    output = bytearray()
+    for descriptor in range(LARGE_GLYPH_COUNT):
+        glyph = descriptors[descriptor * 2 + 1]
+        if glyph >= LARGE_GLYPH_COUNT:
+            raise ValueError(f"descriptor {descriptor:02X}H has invalid glyph")
+        start = glyph * 32
+        glyph_source = source[start:start + 32]
+        for left, right in ((0, 8), (16, 24)):
+            for row in range(8):
+                output.extend(reference_bitmap_byte(glyph_source[left + row]))
+                output.extend(reference_bitmap_byte(glyph_source[right + row]))
     return bytes(output)
 
 
@@ -71,6 +102,14 @@ def verify():
     for value in range(0x100):
         if convert_bitmap_byte(value) != reference_bitmap_byte(value):
             raise ValueError(f"native row conversion failed for {value:02X}H")
+    ordered_probe = bytes(range(32))
+    expected_probe = bytearray()
+    for left, right in ((0, 8), (16, 24)):
+        for row in range(8):
+            expected_probe.extend(reference_bitmap_byte(ordered_probe[left + row]))
+            expected_probe.extend(reference_bitmap_byte(ordered_probe[right + row]))
+    if convert_large_glyph(ordered_probe) != expected_probe:
+        raise ValueError("large-glyph scanline ordering failed")
 
     with tempfile.TemporaryDirectory(prefix="laser-squad-verify-") as temporary:
         root = Path(temporary)
@@ -106,6 +145,30 @@ def verify():
         actual_font = loader.payload[font_offset:font_offset + FONT_NATIVE_SIZE]
         if actual_font != expected_font:
             raise ValueError("LOADER.CAS does not contain the converted main font")
+        for slot in (1, 2):
+            start = symbols[f"TVC_NATIVE_FONT_SLOT{slot}_SOURCE"] - loader.load_address
+            actual_variant = loader.payload[start:start + FONT_NATIVE_SIZE]
+            if actual_variant != colorize_native(expected_font, slot):
+                raise ValueError(
+                    f"LOADER.CAS does not contain the slot-{slot} main-font variant"
+                )
+
+        hidden_start = symbols["TVC_NATIVE_FONT_SLOT1_SOURCE"]
+        hidden_end = symbols["TVC_HIDDEN_CODE_IMAGE_END"]
+        hidden_offset = hidden_start - loader.load_address
+        expected_hidden = loader.payload[
+            hidden_offset:hidden_offset + hidden_end - hidden_start
+        ]
+        hidden_document = parse_rtvc_toml(
+            build_dir / "lasersqd_tvc_hidden_video.toml"
+        )
+        hidden_segment = hidden_document["segments"][0]
+        if hidden_segment["addr"] != symbols["TVC_NATIVE_FONT_SLOT1_RUN"]:
+            raise ValueError("hidden VID0 payload has an unexpected runtime address")
+        if bytes(hidden_segment["bytes"]) != expected_hidden:
+            raise ValueError("hidden VID0 payload does not match LOADER.CAS")
+        if hidden_document["next_addr"] > 0xC000:
+            raise ValueError("hidden VID0 payload exceeds its mapped page")
 
         scenario_files = 0
         for block_name, block_index in laser_build.MULTILOAD_BLOCKS.items():
@@ -125,7 +188,7 @@ def verify():
         native_graphics_files = 0
         for block_name, block_index in laser_build.NATIVE_GRAPHICS_BLOCKS.items():
             scenario = read_tap_block_data(source_tap, block_index)
-            expected = extract_large_graphics(scenario)
+            expected = reference_descriptor_graphics(scenario)
             low, high = split_large_graphics(expected)
             if len(low) != LARGE_LOW_SIZE or len(high) != LARGE_HIGH_SIZE:
                 raise ValueError(f"{block_name}.CAS has an invalid native split")
