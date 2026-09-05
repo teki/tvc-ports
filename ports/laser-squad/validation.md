@@ -73,10 +73,14 @@ runtime loading.
   blue; red/yellow team fields and units become red; equal-color `D` glyphs
   remain visible in black; and green terrain remains green. Test both players
   and a screen where both teams' fields are visible.
-- **Gameplay palette restore:** after final placement, the `5E92H` hook must
-  select profile 2 before the original `B1F7H` clear. Normal gameplay must
-  return to black/green/cyan/yellow rather than retaining the placement
-  profile.
+- **Movement/tactical palettes:** `B1F7H` must select profile 4 so the hidden-
+  movement screen is black/cyan/yellow/magenta. Its return through `5E95H`
+  must apply profile 5 before tactical drawing, producing black/yellow/green/
+  cyan rather than retaining movement or deployment colors.
+- **Firing palette:** the `8497H` clear must select profile 6 without changing
+  its original `45H` attribute. Walls must remain neutral, trajectory markers
+  yellow, and the crosshair cyan. The `85C3H` exit must restore profile 5
+  before clearing and redrawing the tactical map.
 - **Paper/inverse rendering:** the selected soldier name has Spectrum
   attribute `70H` and must render as black text on a bright-yellow background,
   not yellow text on black. Ordinary attributes with paper 0 must retain their
@@ -90,10 +94,14 @@ runtime loading.
   selection call must advance.
 - **Interrupt/drawing:** allow the shopping screen to draw with interrupts
   active. Coordinates must remain in range, the stack must stay below `4000H`,
-  and the installed support image at `2120H-2802H` must not be modified by
+  and the installed support image at `2120H-285FH` must not be modified by
   drawing.
 - **Gameplay input:** verify `Q`, `A`, `O`, `P`, and Space through the
   store/tactical control path, not only in menus.
+- **Aiming directions:** P moves right, O left, Q up, A down. Check single-pixel
+  movement through four- and eight-pixel boundaries. The corrected plotter
+  passed 21 controlled calls in `lsqd-aim.rtvcsnap.zip`, checking coordinates,
+  video addresses, split-plane masks, and original collision masks.
 - **Firing crosshair:** from `lsql-fire.rtvcsnap.zip`, move or blink the firing
   cursor. Its original 21-pixel XOR cross must appear in cyan at the target
   position, and toggling it must not recolor or damage the trajectory circles.
@@ -116,8 +124,8 @@ runtime loading.
   control-selection screens must render cleanly; frame timing, start address,
   and cursor IRQ settings remain unchanged.
 - **Support relocation:** the loader-resident support source at
-  `211EH-2800H` overlaps its higher `2120H-2802H` runtime destination. The
-  loader must use backward `LDDR`, and the installed 1,763-byte image must
+  `211EH-285DH` overlaps its higher `2120H-285FH` runtime destination. The
+  loader must use backward `LDDR`, and the installed 1,856-byte image must
   match the generated support TOML before entering the main game.
 - **Hidden native fonts:** before the first VT-DOS call, VID0 offsets
   `3000H-35FFH` and `3600H-3BFFH` must match the offline slot-1/slot-2 font
@@ -181,3 +189,24 @@ in `rtvc/data/porting`:
 This hash records the migration baseline. `verify.py` deliberately validates
 the component hashes and disk directory instead of requiring all future
 compatible `rtvc-dsk` versions to preserve container bytes.
+
+## Aiming and Shooting Collision Audit
+
+Using `rtvc/snapshots/lsqd-aim.rtvcsnap.zip` with the rebuilt resident support
+in a separate headless emulator, controlled calls passed:
+
+- 384 plotter cases: attributes `41,42,44,45,46,47,70,4D`, X=24..31,
+  Y=43, empty/occupied source pixels, and modes 0/1/2. Check complete output
+  byte, original collision mask (or unchanged sentinel for clear/XOR), and
+  mapper restoration. Seed neighbouring pixels with mixed ink/paper.
+- Original `8974H`: a new point at (31,43) with an old trail point at
+  (28,43), for both empty and occupied new points. The old point clears
+  while `5DA5H` retains the new point's collision.
+- Original `8B7AH`: center (31,43), mixed cyan/black bitmap. Compare the
+  first draw against the 21 signed coordinate pairs at `8B50H`, then call
+  again and compare all 12,288 visible bytes with the initial background.
+  `5DA5H` remains unchanged on both calls.
+
+Coordinates above include the original 8-pixel inset. Routine probes disable
+interrupts, select game mapper `B0H`, and use a reserved test stack. These
+checks do not substitute for full weapon/damage gameplay scenarios.

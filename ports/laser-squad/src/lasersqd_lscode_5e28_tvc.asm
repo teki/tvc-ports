@@ -7,8 +7,11 @@
         ORG 5E28H
         JP %TVC_MAIN_ENTRY%    ; map the game's U3 and reproduce original entry
 
-        ORG 5E92H
-        CALL %TVC_GAMEPLAY_SCREEN_CLEAR% ; restore gameplay palette, then clear
+        ; B1F7H returns here when the hidden-movement interstitial ends. Restore
+        ; tactical colors and reproduce the original XOR / LD (B712H),A pair.
+        ORG 5E95H
+        CALL %TVC_MOVEMENT_COMPLETE%
+        NOP
 
         ORG 0B0E8H
         JP %TVC_NUMBER_INPUT%  ; TVC numeric-key compatibility routine
@@ -34,8 +37,20 @@
         ORG 0A370H
         CALL %TVC_PLACEMENT_SCREEN_CLEAR% ; preserve blue/red deployment teams
 
+        ; Select the firing palette around the original 8495H display. Its
+        ; entry calls the non-XOR screen clear with A=45H; its 85C3H exit uses
+        ; the normal clear before redrawing the tactical map.
+        ORG 8497H
+        CALL %TVC_FIRE_SCREEN_CLEAR%
+
+        ORG 85C3H
+        CALL %TVC_FIRE_SCREEN_EXIT%
+
         ORG 0B15CH
         JP %TVC_MULTILOAD%     ; preserve selector, replace tape transport
+
+        ORG 0B1F7H
+        CALL %TVC_MOVEMENT_SCREEN_CLEAR% ; hidden-movement phase palette
 
         ORG 602DH
         JP %TVC_CLEAR_SCREEN%  ; 602CH retains its original XOR A entry

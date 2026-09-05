@@ -356,12 +356,56 @@ TVC_PLACEMENT_SCREEN_CLEAR:
         LD (TVC_PALETTE_ID_RUN),A
         JP 602CH
 
-; 5E92H enters the normal gameplay/menu clear through B1F7H after deployment.
-; Restore the existing black/green/cyan/yellow profile before that clear.
-TVC_GAMEPLAY_SCREEN_CLEAR:
-        LD A,02H
+; B1F7H constructs the hidden-movement interstitial. Give that temporary
+; screen its cyan/yellow/magenta profile before tail-calling the original
+; clear. Every internal return to B1F7H passes through this hook.
+TVC_MOVEMENT_SCREEN_CLEAR:
+        LD A,04H
         LD (TVC_PALETTE_ID_RUN),A
-        JP 0B1F7H
+        LD A,(TVC_LARGE_TABLE_LOADED_RUN)
+        LD (TVC_MOVEMENT_LARGE_LOADED_RUN),A
+        XOR A
+        LD (TVC_LARGE_TABLE_LOADED_RUN),A
+        CALL 602CH
+        PUSH AF
+        LD A,(TVC_MOVEMENT_LARGE_LOADED_RUN)
+        LD (TVC_LARGE_TABLE_LOADED_RUN),A
+        POP AF
+        RET
+
+; B1F7H returns to 5E95H immediately before normal tactical play begins.
+; Apply the tactical profile now so the resident large-glyph table is rebuilt
+; before the first map draw, then reproduce the overwritten XOR/store pair.
+TVC_MOVEMENT_COMPLETE:
+        PUSH BC
+        PUSH DE
+        PUSH HL
+        LD A,05H
+        LD (TVC_PALETTE_ID_RUN),A
+        CALL TVC_APPLY_PALETTE_RUN
+        POP HL
+        POP DE
+        POP BC
+        XOR A
+        LD (0B712H),A
+        RET
+
+; 8495H enters the firing display by supplying attribute 45H to the original
+; non-XOR clear entry at 602DH. Preserve that attribute while selecting the
+; neutral-wall/yellow-shot/cyan-crosshair profile.
+TVC_FIRE_SCREEN_CLEAR:
+        PUSH AF
+        LD A,06H
+        LD (TVC_PALETTE_ID_RUN),A
+        POP AF
+        JP 602DH
+
+; 85C3H leaves the firing display through a normal clear and map redraw.
+; Restore tactical colors before either operation.
+TVC_FIRE_SCREEN_EXIT:
+        LD A,05H
+        LD (TVC_PALETTE_ID_RUN),A
+        JP 602CH
 
 ; Replacement for the original 693FH-6942H attribute-store sequence used by
 ; the selection highlighter. Preserve OR 40H, the attribute write, registers,
@@ -579,9 +623,12 @@ TVC_APPLY_PALETTE_NEXT:
 TVC_PALETTES:
 TVC_PALETTES_RUN EQU TVC_SUPPORT_RUN+TVC_PALETTES-TVC_SUPPORT_IMAGE
         DB 00H,51H,54H,44H    ; profile 0: controls, black/cyan/yellow/red
-        DB 00H,50H,54H,44H    ; profile 1: game, black/green/yellow/red
+        DB 00H,50H,54H,44H    ; profile 1: setup, black/green/yellow/red
         DB 00H,50H,51H,54H    ; profile 2: team, black/green/cyan/yellow
         DB 00H,50H,41H,44H    ; profile 3: placement, black/green/blue/red
+        DB 00H,51H,54H,45H    ; profile 4: movement, black/cyan/yellow/magenta
+        DB 00H,54H,50H,51H    ; profile 5: tactical, black/yellow/green/cyan
+        DB 00H,15H,54H,51H    ; profile 6: firing, black/white/yellow/cyan
 
 TVC_PALETTE_ID:
 TVC_PALETTE_ID_RUN EQU TVC_SUPPORT_RUN+TVC_PALETTE_ID-TVC_SUPPORT_IMAGE
@@ -731,6 +778,9 @@ TVC_INK_PALETTE_MAPS_RUN EQU TVC_SUPPORT_RUN+TVC_INK_PALETTE_MAPS-TVC_SUPPORT_IM
         DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 1: green/yellow/red
         DB 00H,02H,03H,02H,01H,02H,03H,02H ; profile 2: white -> cyan
         DB 00H,02H,03H,03H,01H,02H,03H,01H ; profile 3: team primaries
+        DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 4: movement accents
+        DB 00H,03H,01H,01H,02H,03H,01H,01H ; profile 5: yellow structure
+        DB 00H,03H,01H,01H,01H,03H,02H,01H ; profile 6: firing markers
 
 ; Convert a GRAPHICS 4 palette slot to the byte pattern for four pixels.
 ; Input A = slot 0-3, output A = 00H/F0H/0FH/FFH.
@@ -1072,11 +1122,12 @@ TVC_PLOT_PIXEL:
         LD DE,(5DA3H)
         LD HL,0808H
         ADD HL,DE
-        LD A,L
-        LD (TVC_PIXEL_X_RUN),A
+        ; Original coordinates are L=Y, H=X after the 8-pixel inset.
         LD A,H
-        LD (TVC_PIXEL_Y_RUN),A
+        LD (TVC_PIXEL_X_RUN),A
         LD A,L
+        LD (TVC_PIXEL_Y_RUN),A
+        LD A,H
         AND 07H
         INC A
         LD B,A
@@ -1131,7 +1182,7 @@ TVC_PLOT_SPECTRUM_MASK:
         AND 03H
         INC A
         LD B,A
-        LD A,88H
+        LD A,11H               ; first RRCA gives 88H, then 44H/22H/11H
 TVC_PLOT_TVC_MASK:
         RRCA
         DJNZ TVC_PLOT_TVC_MASK
@@ -1362,6 +1413,9 @@ TVC_LARGE_DESCRIPTOR_PTR_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_DESCRIPTOR_PTR-TVC_SU
         DW 0000H
 TVC_LARGE_TABLE_LOADED:
 TVC_LARGE_TABLE_LOADED_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_TABLE_LOADED-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_MOVEMENT_LARGE_LOADED:
+TVC_MOVEMENT_LARGE_LOADED_RUN EQU TVC_SUPPORT_RUN+TVC_MOVEMENT_LARGE_LOADED-TVC_SUPPORT_IMAGE
         DB 00H
 TVC_LARGE_TABLE_PALETTE:
 TVC_LARGE_TABLE_PALETTE_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_TABLE_PALETTE-TVC_SUPPORT_IMAGE

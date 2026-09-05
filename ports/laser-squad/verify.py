@@ -35,16 +35,36 @@ from rtvc import parse_rtvc_toml, run_tool
 
 
 EXPECTED_PATCHED_CAS = {
-    "LOADER.CAS": ("lasersqd_loader.cas", "eae203360049c07b376b37b20fd80da0c127bdd897d595027e4ee2a888728058"),
+    "LOADER.CAS": ("lasersqd_loader.cas", "819a3a35a8d002ae41071f0155dc30e2db4ae79cad935f9ec64500581852ff76"),
     "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "3b8efc05885080fd82704b01b2cc7b3604530871c6637f4ad4fb80235dcddf8f"),
-    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "97200003388139198173b1a7038eddabb30c3e162b12eba2de0df0b144fbee51"),
+    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "961ea37f629ee720da1e1913c6112f4ab1a13014c5243cc61a67d81dd20242e8"),
 }
 
 EXPECTED_PATCHED_SIZES = {
-    "LOADER.CAS": 7478,
+    "LOADER.CAS": 7571,
     "LS1.CAS": 2320,
     "LS2.CAS": 22665,
 }
+
+EXPECTED_PALETTES = bytes((
+    0x00, 0x51, 0x54, 0x44,
+    0x00, 0x50, 0x54, 0x44,
+    0x00, 0x50, 0x51, 0x54,
+    0x00, 0x50, 0x41, 0x44,
+    0x00, 0x51, 0x54, 0x45,
+    0x00, 0x54, 0x50, 0x51,
+    0x00, 0x15, 0x54, 0x51,
+))
+
+EXPECTED_INK_PALETTE_MAPS = bytes((
+    0, 1, 3, 3, 1, 1, 2, 2,
+    0, 1, 3, 3, 1, 1, 2, 2,
+    0, 2, 3, 2, 1, 2, 3, 2,
+    0, 2, 3, 3, 1, 2, 3, 1,
+    0, 1, 3, 3, 1, 1, 2, 2,
+    0, 3, 1, 1, 2, 3, 1, 1,
+    0, 3, 1, 1, 1, 3, 2, 1,
+))
 
 
 def reference_bitmap_byte(value):
@@ -141,6 +161,18 @@ def verify():
         symbols = parse_rtvc_toml(
             build_dir / "lasersqd_loader_bootstrap.toml"
         )["symbols"]
+        palette_offset = symbols["TVC_PALETTES"] - loader.load_address
+        actual_palettes = loader.payload[
+            palette_offset:palette_offset + len(EXPECTED_PALETTES)
+        ]
+        if actual_palettes != EXPECTED_PALETTES:
+            raise ValueError("LOADER.CAS has unexpected TVC palette profiles")
+        maps_offset = symbols["TVC_INK_PALETTE_MAPS"] - loader.load_address
+        actual_maps = loader.payload[
+            maps_offset:maps_offset + len(EXPECTED_INK_PALETTE_MAPS)
+        ]
+        if actual_maps != EXPECTED_INK_PALETTE_MAPS:
+            raise ValueError("LOADER.CAS has unexpected Spectrum ink maps")
         font_offset = symbols["TVC_NATIVE_FONT"] - loader.load_address
         actual_font = loader.payload[font_offset:font_offset + FONT_NATIVE_SIZE]
         if actual_font != expected_font:

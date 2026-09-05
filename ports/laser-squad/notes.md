@@ -606,12 +606,14 @@ recombination.
 The later main-game compatibility renderer selects its GRAPHICS 4 colors from
 a table of four-byte palette profiles. Profile 0 is black, bright cyan, yellow,
 and red for the control-selection screen; profile 1 is black, bright green,
-yellow, and red for subsequent screens; profile 2 is black, bright green,
-bright cyan, and yellow for team/armour setup and normal gameplay; and profile
-3 is black, bright green, bright blue, and bright red for deployment. The
-common clear routine applies the currently selected profile to ports
-`60H-63H`, so additional game-phase palettes can be added without duplicating
-the hardware writes.
+yellow, and red for subsequent setup screens; profile 2 is black, bright
+green, bright cyan, and yellow for team/armour setup; profile 3 is black,
+bright green, bright blue, and bright red for deployment; profile 4 is black,
+bright cyan, yellow, and magenta for hidden movement; profile 5 is black,
+yellow, bright green, and bright cyan for tactical maps; and profile 6 is
+black, dim white, yellow, and bright cyan for firing. The common clear routine
+applies the currently selected profile to ports `60H-63H`, so additional
+game-phase palettes can be added without duplicating the hardware writes.
 
 The `B0ADH` control-screen entry selects profile 0 before its clear. At the
 shared `B0C3H` exit, a narrow compatibility call preserves and stores the
@@ -636,10 +638,29 @@ yellow soldiers become blue and red respectively.
 
 Debugger tracing located the common placement clear at `A370H`; both player
 paths call it, so that entry selects profile 3 before the original clear.
-After placement, `5E92H` enters `B1F7H`, whose first operation is another
-screen clear. That call now selects profile 2 before entering `B1F7H`, restoring
-the existing black/green/cyan/yellow gameplay rendering without a separate
-full-screen redraw.
+After placement, `5E92H` enters `B1F7H`, which constructs the hidden-movement
+interstitial. Its clear selects profile 4. When `B1F7H` returns through
+`5E95H`, the compatibility hook immediately applies profile 5 and rebuilds the
+resident native large-glyph table before tactical drawing begins. Because the
+movement screen uses text but no large map tiles, its wrapper temporarily
+marks the large table unloaded while applying profile 4. The table therefore
+retains its preceding colorization, and the profile-5 restore performs a
+185-glyph rebuild only when the retained table is not already tactical. This
+avoids an otherwise unconditional movement-profile rebuild followed by a
+tactical rebuild.
+
+Visual testing favored the earlier yellow rendering over neutral gray on the
+tactical map. Profile 5 therefore maps Spectrum white, yellow, red, and
+magenta to its yellow slot while retaining green and cyan as separate colors.
+The firing profile keeps dim white because its yellow slot is reserved for
+trajectory markers.
+
+The firing display begins at `8495H`. Its original call at `8497H` supplies
+attribute `45H` to the non-XOR screen-clear entry; the compatibility wrapper
+preserves that value while selecting profile 6. The firing exit at `85C3H`
+restores profile 5 before the original clear and tactical-map redraw. This
+keeps walls neutral in both phases while reserving yellow for trajectory
+markers and cyan for the firing crosshair.
 
 The renderer maps both halves of each Spectrum attribute through the active
 profile: bitmap bits set to one use the ink slot, while cleared bits use the
@@ -703,7 +724,7 @@ The converted memory layout on a 64K TVC is:
 | Range | Size | Use |
 | --- | ---: | --- |
 | `1B1EH-211DH` | `0600H` | Loader-resident slot-3 native font codes `20H-7FH` |
-| `2120H-2802H` | `06E3H` | Relocated TVC runtime support |
+| `2120H-285FH` | `0740H` | Relocated TVC runtime support |
 | `2880H-3EBFH` | `1640H` | First 89 native large glyphs |
 | `4000H-57FFH` | `1800H` | Remaining 96 native large glyphs |
 | `5800H-5AFFH` | `0300H` | Spectrum attribute state retained for game logic |
@@ -826,3 +847,64 @@ branches or fidelity work that have not been exhaustively validated:
   allowing accidental TVC port writes.
 - Continue auditing less-used interrupt-sensitive branches even though the
   firmware stack is now isolated from the Spectrum workspace.
+
+### Aiming pixel coordinate correction
+
+The original `844CH` plotter reads `5DA3H` as Y and `5DA4H` as X,
+then adds the `0808H` screen inset. The native replacement had reversed
+these axes, so aiming P/O moved vertically and Q/A horizontally. It now
+retains the original coordinate contract, including the X-based collision
+mask. The native mask loop performs X modulo 4 plus one rotations; its
+seed is now `11H`, producing `88H,44H,22H,11H` in left-to-right order.
+The previous `88H` seed shifted each pixel one place and wrapped within
+each byte. These four opcode-byte changes preserve all routine addresses.
+
+The supplied `rtvc/snapshots/lsqd-aim.rtvcsnap.zip` was used for 21
+controlled calls of the rebuilt resident plotter: X=24..35 at Y=43 and
+Y=40..48 at X=31. Every resulting coordinate, native address, native plane
+mask, and Spectrum collision mask matched its independent expected value.
+This checks the translated plotter; full interactive key replay remains a
+manual regression check.
+
+### Aiming and shooting collision audit
+
+The common plotter is part of hit detection, not just presentation:
+
+- `8B7AH` draws the aiming cross from the original 21 coordinate pairs at
+  `8B50H`, in XOR mode. It does not change `5DA5H`.
+- `8974H` adds the new projectile position to the trail ring, plots it in
+  set mode, then clears the oldest position. The clear must retain the new
+  position's collision result.
+- `89B1H` advances the original trajectory and tests `5DA5H` after `8974H`;
+  a nonzero value terminates the trajectory through `8A20H`.
+- `90E4H` reads that same result after the trajectory returns. Zero returns
+  without hit handling; nonzero proceeds to the original weapon-dependent
+  impact code, including terrain and unit handling (`9175H`).
+
+For mode 0 the original collision value is the selected Spectrum bit mask
+AND the pre-write bitmap byte. The native plotter reconstructs that logical
+bit by comparing the existing pixel slot with the cell's mapped ink, then
+returns the original `80H >> (X & 7)` mask or zero in `5DA5H`. The write
+helper leaves B intact until that result is stored. Modes 1 and 2 retain
+`5DA5H`; no audited direct caller consumes the plotter's A/flags, native HL,
+or clobbered DE/C as a collision result. The native byte in A is not a
+byte-for-byte Spectrum register return, but these callers do not need it.
+
+Controlled execution in the supplied aiming snapshot passed 384 combinations
+of eight representative attributes, eight pixel offsets, empty/occupied
+pixels, and set/clear/XOR modes. Checks covered the output byte, unchanged
+neighbour pixels, collision byte, and restored `B0H` mapping. Attributes
+included inverse `70H` and mapped-color collision fallback `4DH`.
+The original `8974H` routine passed both empty and occupied new-pixel cases
+with an occupied old trail pixel: erasing the old pixel retained the correct
+new collision. The original `8B7AH` output matched its 21 coordinate pairs
+on a mixed background; a second call restored all 12,288 visible video bytes
+and left the collision byte untouched.
+
+The live `E65FH` descriptor attributes in this snapshot were
+`04,05,06,07,41,42,43,44,45,46,47,4D,56`. All retain distinguishable ink and
+paper under the tactical palette and its equal-slot fallback. This matters
+because native-only collision recovery relies on that distinction. This
+audit validates the drawing/collision boundary and projectile-trail caller;
+it is not an exhaustive playthrough of every weapon, scenario, or damage
+branch. No further functional change was required by these checks.
