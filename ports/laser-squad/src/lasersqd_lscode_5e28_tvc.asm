@@ -13,8 +13,16 @@
         CALL %TVC_MOVEMENT_COMPLETE%
         NOP
 
+        ; Control methods 1-3 are Spectrum joysticks that share one action
+        ; byte. Read the TVC joystick instead. Method 4 stays keyboard.
         ORG 0B0E8H
-        JP %TVC_NUMBER_INPUT%  ; TVC numeric-key compatibility routine
+        JP %TVC_JOYSTICK%      ; Sinclair -> TVC joystick
+
+        ORG 0B0FDH
+        JP %TVC_JOYSTICK%      ; Kempston -> TVC joystick
+
+        ORG 0B117H
+        JP %TVC_JOYSTICK%      ; Protek/AGF/cursor -> TVC joystick
 
         ORG 0B136H
         JP %TVC_GAME_KEYS%     ; Q/A/O/P/Space gameplay controls

@@ -213,13 +213,13 @@ An end-to-end TVC debugger trace reached these original routines in order:
 4. `A276H` — initial option selection; and
 5. `B0C8H` — input-device dispatch.
 
-At the first input dispatch, `B0C7H` is zero, selecting the Spectrum keyboard
-routine at `B0E8H`. That entry now jumps into the relocatable support image
-which the assembly loader copies to `2120H`. It scans TVC rows 0 and 1 directly
-through ports `03H`/`58H` and reproduces the original five active-low numeric
-key pairs (`0/5`, `9/4`, `8/3`, `7/2`, `6/1`). Debugger verification returned
-`FFH` with no key and `EFH` while TVC key `1` was held, matching the original
-bit-4 result.
+At the first input dispatch, `B0C7H` is zero, selecting control method 1 at
+`B0E8H`. The original four `CONTROLS ?` choices remain: Sinclair, Kempston,
+Protek/AGF/cursor, and keyboard. The first three Spectrum joystick readers
+all produce the same active-low action byte (fire, up, down, right, left in
+bits 0-4). Their entries at `B0E8H`, `B0FDH`, and `B117H` now jump to one TVC
+joystick scan of keyboard row 8 (Tab/Fire, Up, Down, Right, Left). Numeric
+menus do not use this path.
 
 The scenario-selection path calls Spectrum ROM `KEY-SCAN` (`028EH`) at
 `6A74H` while waiting for key release and again at `A290H` while accepting the
@@ -727,7 +727,7 @@ The converted memory layout on a 64K TVC is:
 | Range | Size | Use |
 | --- | ---: | --- |
 | `1B1EH-211DH` | `0600H` | Loader-resident slot-3 native font codes `20H-7FH` |
-| `2120H-286FH` | `0750H` | Relocated TVC runtime support |
+| `2120H-284FH` | `0730H` | Relocated TVC runtime support |
 | `2880H-3EBFH` | `1640H` | First 89 native large glyphs |
 | `4000H-57FFH` | `1800H` | Remaining 96 native large glyphs |
 | `5800H-5AFFH` | `0300H` | Spectrum attribute state retained for game logic |

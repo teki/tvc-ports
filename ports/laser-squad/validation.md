@@ -99,10 +99,12 @@ runtime loading.
   selection call must advance.
 - **Interrupt/drawing:** allow the shopping screen to draw with interrupts
   active. Coordinates must remain in range, the stack must stay below `4000H`,
-  and the installed support image at `2120H-286FH` must not be modified by
+  and the installed support image at `2120H-284FH` must not be modified by
   drawing.
 - **Gameplay input:** verify `Q`, `A`, `O`, `P`, and Space through the
-  store/tactical control path, not only in menus.
+  store/tactical control path, not only in menus. Control-selection options
+  1-3 must use the TVC joystick (row 8: Tab/Fire, arrows) with the same
+  fire/up/down/right/left action bits; option 4 remains keyboard.
 - **Aiming directions:** P moves right, O left, Q up, A down. Check single-pixel
   movement through four- and eight-pixel boundaries. The corrected plotter
   passed 21 controlled calls in `lsqd-aim.rtvcsnap.zip`, checking coordinates,
@@ -129,8 +131,8 @@ runtime loading.
   control-selection screens must render cleanly; frame timing, start address,
   and cursor IRQ settings remain unchanged.
 - **Support relocation:** the loader-resident support source at
-  `211EH-286DH` overlaps its higher `2120H-286FH` runtime destination. The
-  loader must use backward `LDDR`, and the installed 1,872-byte image must
+  `211EH-284DH` overlaps its higher `2120H-284FH` runtime destination. The
+  loader must use backward `LDDR`, and the installed 1,840-byte image must
   match the generated support TOML before entering the main game.
 - **Hidden native fonts:** before the first VT-DOS call, VID0 offsets
   `3000H-35FFH` and `3600H-3BFFH` must match the offline slot-1/slot-2 font
@@ -234,4 +236,16 @@ in a separate headless emulator, the assembled phase hooks passed:
 
 No suitable unit-information snapshot was available for a visual return-to-map
 check. Interactive inspection of that screen remains a manual regression.
+
+## Joystick Control Probe
+
+Using `rtvc/snapshots/boot12dos.rtvcsnap.zip` with the rebuilt resident support
+in a separate headless emulator, Sinclair (`B0E8H`), Kempston (`B0FDH`), and
+Protek/AGF/cursor (`B117H`) all returned the same TVC joystick action byte:
+
+- none `FFH`, Tab/Fire `FEH`, Up `FDH`, Down `FBH`, Right `F7H`, Left `EFH`.
+
+Option 4 remains the keyboard handler. Interactive play with a host joystick or
+arrow keys plus Tab is a manual regression.
+
 

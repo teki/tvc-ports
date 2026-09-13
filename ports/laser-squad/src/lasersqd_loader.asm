@@ -200,57 +200,37 @@ TVC_MAIN_ENTRY:
         LD SP,4000H             ; 140H clear below the native low table
         JP 0B1C3H
 
-TVC_NUMBER_INPUT:
+; Sinclair, Kempston, and Protek/AGF/cursor all return the same active-low
+; action byte: bit 0 fire, bit 1 up, bit 2 down, bit 3 right, bit 4 left.
+; Map those three control methods to the TVC joystick on keyboard row 8.
+TVC_JOYSTICK:
+        LD E,0FFH
         LD A,(0B11H)
         AND F0H
+        OR 08H
         OUT (03H),A
-        IN A,(58H)
-        LD D,A
-        LD A,(0B11H)
-        AND F0H
-        INC A
-        OUT (03H),A
-        IN A,(58H)
-        LD E,A
-        LD C,0FFH
-
-        BIT 3,D                 ; TVC 0
-        JR Z,TVC_NUMBER_0_5
-        BIT 0,D                 ; TVC 5
-        JR NZ,TVC_NUMBER_9_4
-TVC_NUMBER_0_5:
-        RES 0,C
-TVC_NUMBER_9_4:
-        BIT 2,E                 ; TVC 9
-        JR Z,TVC_NUMBER_9_4_DOWN
-        BIT 7,D                 ; TVC 4
-        JR NZ,TVC_NUMBER_8_3
-TVC_NUMBER_9_4_DOWN:
-        RES 1,C
-TVC_NUMBER_8_3:
-        BIT 1,E                 ; TVC 8
-        JR Z,TVC_NUMBER_8_3_DOWN
-        BIT 1,D                 ; TVC 3
-        JR NZ,TVC_NUMBER_7_2
-TVC_NUMBER_8_3_DOWN:
-        RES 2,C
-TVC_NUMBER_7_2:
-        BIT 7,E                 ; TVC 7
-        JR Z,TVC_NUMBER_7_2_DOWN
-        BIT 2,D                 ; TVC 2
-        JR NZ,TVC_NUMBER_6_1
-TVC_NUMBER_7_2_DOWN:
-        RES 3,C
-TVC_NUMBER_6_1:
-        BIT 4,D                 ; TVC 6
-        JR Z,TVC_NUMBER_6_1_DOWN
-        BIT 6,D                 ; TVC 1
-        JR NZ,TVC_NUMBER_DONE
-TVC_NUMBER_6_1_DOWN:
-        RES 4,C
-TVC_NUMBER_DONE:
-        LD A,C
-        OR E0H
+        IN A,(58H)             ; row 8: fire/up/down/right/left
+        BIT 3,A                 ; Tab/Fire
+        JR NZ,TVC_JOYSTICK_UP
+        RES 0,E
+TVC_JOYSTICK_UP:
+        BIT 1,A                 ; Up
+        JR NZ,TVC_JOYSTICK_DOWN
+        RES 1,E
+TVC_JOYSTICK_DOWN:
+        BIT 2,A                 ; Down
+        JR NZ,TVC_JOYSTICK_RIGHT
+        RES 2,E
+TVC_JOYSTICK_RIGHT:
+        BIT 5,A                 ; Right
+        JR NZ,TVC_JOYSTICK_LEFT
+        RES 3,E
+TVC_JOYSTICK_LEFT:
+        BIT 6,A                 ; Left
+        JR NZ,TVC_JOYSTICK_DONE
+        RES 4,E
+TVC_JOYSTICK_DONE:
+        LD A,E
         RET
 
 ; Replacement for Spectrum ROM KEY-SCAN at 028EH. Return the original Spectrum

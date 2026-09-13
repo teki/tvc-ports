@@ -218,7 +218,7 @@ def loader_support_addresses():
     source_base = symbols["TVC_SUPPORT_IMAGE"]
     names = (
         "TVC_MAIN_ENTRY",
-        "TVC_NUMBER_INPUT",
+        "TVC_JOYSTICK",
         "TVC_KEY_SCAN",
         "TVC_CONTROLS_SCREEN_CLEAR",
         "TVC_CONTROLS_SELECTED",

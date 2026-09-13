@@ -35,13 +35,13 @@ from rtvc import parse_rtvc_toml, run_tool
 
 
 EXPECTED_PATCHED_CAS = {
-    "LOADER.CAS": ("lasersqd_loader.cas", "1b845d45895a0dffd44e04acaea9984c5ab91a52852d18c89295a02001339d80"),
+    "LOADER.CAS": ("lasersqd_loader.cas", "7400c95fe9e1a7744e4c1ea66e2647b38bb35f2435b57f6a8826fb1132b20442"),
     "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "3b8efc05885080fd82704b01b2cc7b3604530871c6637f4ad4fb80235dcddf8f"),
-    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "c1bc9656129a89fcace35fef638f53ea4a529bf30e99c2d904208808d759da52"),
+    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "a933b2f442f673d516de5015b2fb8bb679d43f654a96ae4f1bd1420e02d6fa73"),
 }
 
 EXPECTED_PATCHED_SIZES = {
-    "LOADER.CAS": 7587,
+    "LOADER.CAS": 7555,
     "LS1.CAS": 2320,
     "LS2.CAS": 22665,
 }
@@ -187,6 +187,10 @@ def verify():
             target = runtime_support(name)
             return bytes((0xCD, target & 0xFF, target >> 8))
 
+        def expected_jump(name):
+            target = runtime_support(name)
+            return bytes((0xC3, target & 0xFF, target >> 8))
+
         if lscode_call(0x875A) != expected_call("TVC_UNIT_INFO_SCREEN_CLEAR"):
             raise ValueError("LS2.CAS unit-information entry is not hooked")
         if lscode_call(0x8875) != expected_call("TVC_UNIT_INFO_SCREEN_EXIT"):
@@ -197,6 +201,15 @@ def verify():
             "TVC_FIRE_SCREEN_EXIT"
         ):
             raise ValueError("unit-information and firing exits must share restoration")
+        joystick = expected_jump("TVC_JOYSTICK")
+        if lscode_call(0xB0E8) != joystick:
+            raise ValueError("LS2.CAS Sinclair control is not hooked to the TVC joystick")
+        if lscode_call(0xB0FD) != joystick:
+            raise ValueError("LS2.CAS Kempston control is not hooked to the TVC joystick")
+        if lscode_call(0xB117) != joystick:
+            raise ValueError("LS2.CAS cursor control is not hooked to the TVC joystick")
+        if lscode_call(0xB136) != expected_jump("TVC_GAME_KEYS"):
+            raise ValueError("LS2.CAS keyboard control is not hooked")
         font_offset = symbols["TVC_NATIVE_FONT"] - loader.load_address
         actual_font = loader.payload[font_offset:font_offset + FONT_NATIVE_SIZE]
         if actual_font != expected_font:
