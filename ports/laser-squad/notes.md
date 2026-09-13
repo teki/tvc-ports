@@ -608,7 +608,7 @@ a table of four-byte palette profiles. Profile 0 is black, bright cyan, yellow,
 and red for the control-selection screen; profile 1 is black, bright green,
 yellow, and red for subsequent setup screens; profile 2 is black, bright
 green, bright cyan, and yellow for team/armour setup; profile 3 is black,
-bright green, bright blue, and bright red for deployment; profile 4 is black,
+grey, bright cyan, and yellow for deployment; profile 4 is black,
 bright cyan, yellow, and magenta for hidden movement; profile 5 is black,
 yellow, bright green, and bright cyan for tactical maps; and profile 6 is
 black, dim white, yellow, and bright cyan for firing. The common clear routine
@@ -630,11 +630,11 @@ that entry now selects profile 2 before the shared clear.
 The placement screenshot pairs show a different priority: both teams may be
 visible at once, with cyan ink on blue paper for one team's `D` fields and
 yellow ink on red paper for the other. Those five colors including black
-cannot coexist in GRAPHICS 4. Profile 3 therefore preserves team identity:
-Spectrum blue/cyan map to bright blue, red/yellow map to bright red, green
-remains green, and white uses a visible green fallback. The existing equal-slot
-fallback makes each `D` black on its true blue or red field; deployed cyan and
-yellow soldiers become blue and red respectively.
+cannot coexist in GRAPHICS 4. The accepted profile 3 therefore keeps team
+identity in cyan and yellow: Spectrum blue/cyan map to bright cyan, red/yellow
+map to yellow, and green/white use grey. The existing equal-slot fallback
+makes each `D` black on its cyan or yellow field; deployed soldiers keep those
+same team colors.
 
 Debugger tracing located the common placement clear at `A370H`; both player
 paths call it, so that entry selects profile 3 before the original clear.
@@ -643,17 +643,20 @@ interstitial. Its clear selects profile 4. When `B1F7H` returns through
 `5E95H`, the compatibility hook immediately applies profile 5 and rebuilds the
 resident native large-glyph table before tactical drawing begins. Because the
 movement screen uses text but no large map tiles, its wrapper temporarily
-marks the large table unloaded while applying profile 4. The table therefore
-retains its preceding colorization, and the profile-5 restore performs a
-185-glyph rebuild only when the retained table is not already tactical. This
-avoids an otherwise unconditional movement-profile rebuild followed by a
-tactical rebuild.
+marks the large table unloaded while applying profile 4. Unit information at
+`874DH` is the same kind of interstitial: `875AH` supplies attribute `46H` to
+the non-XOR clear, selects the existing setup profile 1, and shares that
+table-preservation helper. Its `8875H` exit restores profile 5 before the
+original clear and map redraw, reusing the firing-exit restoration. The table
+therefore retains its preceding colorization around both screens, and the
+profile-5 restore performs a 185-glyph rebuild only when the retained table is
+not already tactical.
 
 Visual testing favored the earlier yellow rendering over neutral gray on the
 tactical map. Profile 5 therefore maps Spectrum white, yellow, red, and
-magenta to its yellow slot while retaining green and cyan as separate colors.
-The firing profile keeps dim white because its yellow slot is reserved for
-trajectory markers.
+magenta to its yellow slot, keeps cyan distinct, and maps blue floor grids
+onto the existing green slot. The firing profile keeps dim white because its
+yellow slot is reserved for trajectory markers.
 
 The firing display begins at `8495H`. Its original call at `8497H` supplies
 attribute `45H` to the non-XOR screen-clear entry; the compatibility wrapper
@@ -724,7 +727,7 @@ The converted memory layout on a 64K TVC is:
 | Range | Size | Use |
 | --- | ---: | --- |
 | `1B1EH-211DH` | `0600H` | Loader-resident slot-3 native font codes `20H-7FH` |
-| `2120H-285FH` | `0740H` | Relocated TVC runtime support |
+| `2120H-286FH` | `0750H` | Relocated TVC runtime support |
 | `2880H-3EBFH` | `1640H` | First 89 native large glyphs |
 | `4000H-57FFH` | `1800H` | Remaining 96 native large glyphs |
 | `5800H-5AFFH` | `0300H` | Spectrum attribute state retained for game logic |

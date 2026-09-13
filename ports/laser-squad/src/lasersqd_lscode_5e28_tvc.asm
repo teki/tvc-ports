@@ -35,7 +35,7 @@
         CALL %TVC_TEAM_SETUP_CLEAR% ; select team palette before its clear
 
         ORG 0A370H
-        CALL %TVC_PLACEMENT_SCREEN_CLEAR% ; preserve blue/red deployment teams
+        CALL %TVC_PLACEMENT_SCREEN_CLEAR% ; preserve cyan/yellow deployment teams
 
         ; Select the firing palette around the original 8495H display. Its
         ; entry calls the non-XOR screen clear with A=45H; its 85C3H exit uses
@@ -45,6 +45,15 @@
 
         ORG 85C3H
         CALL %TVC_FIRE_SCREEN_EXIT%
+
+        ; Select the setup palette around the original 874DH unit-information
+        ; display. Its entry calls the non-XOR screen clear with A=46H; its
+        ; 8875H exit uses the normal clear before redrawing the tactical map.
+        ORG 875AH
+        CALL %TVC_UNIT_INFO_SCREEN_CLEAR%
+
+        ORG 8875H
+        CALL %TVC_UNIT_INFO_SCREEN_EXIT%
 
         ORG 0B15CH
         JP %TVC_MULTILOAD%     ; preserve selector, replace tape transport

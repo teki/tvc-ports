@@ -69,14 +69,19 @@ runtime loading.
   `9D55H` team-setup clear must select black/green/cyan/yellow. Spectrum green,
   cyan, and yellow must remain distinct; Spectrum white may use bright cyan.
 - **Placement palette:** the common `A370H` placement clear must select
-  black/green/bright-blue/bright-red. Blue/cyan team fields and units become
-  blue; red/yellow team fields and units become red; equal-color `D` glyphs
-  remain visible in black; and green terrain remains green. Test both players
+  black/grey/cyan/yellow. Blue/cyan team fields and units become cyan;
+  red/yellow team fields and units become yellow; equal-color `D` glyphs
+  remain visible in black; and green terrain becomes grey. Test both players
   and a screen where both teams' fields are visible.
 - **Movement/tactical palettes:** `B1F7H` must select profile 4 so the hidden-
   movement screen is black/cyan/yellow/magenta. Its return through `5E95H`
   must apply profile 5 before tactical drawing, producing black/yellow/green/
-  cyan rather than retaining movement or deployment colors.
+  cyan rather than retaining movement or deployment colors. Spectrum blue
+  floor grids must use the green slot; cyan overlays stay cyan.
+- **Unit-information palette:** the `875AH` clear must select profile 1 without
+  changing its original `46H` attribute, and must not recolor the resident
+  map-glyph cache. The `8875H` exit must restore profile 5 before clearing and
+  redrawing the tactical map.
 - **Firing palette:** the `8497H` clear must select profile 6 without changing
   its original `45H` attribute. Walls must remain neutral, trajectory markers
   yellow, and the crosshair cyan. The `85C3H` exit must restore profile 5
@@ -94,7 +99,7 @@ runtime loading.
   selection call must advance.
 - **Interrupt/drawing:** allow the shopping screen to draw with interrupts
   active. Coordinates must remain in range, the stack must stay below `4000H`,
-  and the installed support image at `2120H-285FH` must not be modified by
+  and the installed support image at `2120H-286FH` must not be modified by
   drawing.
 - **Gameplay input:** verify `Q`, `A`, `O`, `P`, and Space through the
   store/tactical control path, not only in menus.
@@ -124,8 +129,8 @@ runtime loading.
   control-selection screens must render cleanly; frame timing, start address,
   and cursor IRQ settings remain unchanged.
 - **Support relocation:** the loader-resident support source at
-  `211EH-285DH` overlaps its higher `2120H-285FH` runtime destination. The
-  loader must use backward `LDDR`, and the installed 1,856-byte image must
+  `211EH-286DH` overlaps its higher `2120H-286FH` runtime destination. The
+  loader must use backward `LDDR`, and the installed 1,872-byte image must
   match the generated support TOML before entering the main game.
 - **Hidden native fonts:** before the first VT-DOS call, VID0 offsets
   `3000H-35FFH` and `3600H-3BFFH` must match the offline slot-1/slot-2 font
@@ -210,3 +215,23 @@ in a separate headless emulator, controlled calls passed:
 Coordinates above include the original 8-pixel inset. Routine probes disable
 interrupts, select game mapper `B0H`, and use a reserved test stack. These
 checks do not substitute for full weapon/damage gameplay scenarios.
+
+## Palette Refinement Probe
+
+Using `rtvc/snapshots/boot12dos.rtvcsnap.zip` with the rebuilt resident support
+in a separate headless emulator, the assembled phase hooks passed:
+
+- `875AH` preserves attribute `46H`, selects profile 1, restores the large-table
+  loaded flag, and leaves a sentinel at `2880H` plus the table's tactical
+  palette id unchanged.
+- `8875H` restores profile 5, skips the glyph rebuild, and keeps that sentinel.
+- `B1F7H` selects profile 4 with the same cache preservation.
+- Deployment attributes `0DH`/`16H`/`04H` map to black-on-cyan, black-on-yellow,
+  and grey-on-black. Tactical `01H`/`0DH`/`05H` map to green-on-black,
+  cyan-on-green, and cyan-on-black.
+- Profile 3 hardware bytes are `00H,15H,51H,54H`; profile 5 maps Spectrum blue
+  to slot 2.
+
+No suitable unit-information snapshot was available for a visual return-to-map
+check. Interactive inspection of that screen remains a manual regression.
+

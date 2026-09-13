@@ -228,6 +228,8 @@ def loader_support_addresses():
         "TVC_MOVEMENT_COMPLETE",
         "TVC_FIRE_SCREEN_CLEAR",
         "TVC_FIRE_SCREEN_EXIT",
+        "TVC_UNIT_INFO_SCREEN_CLEAR",
+        "TVC_UNIT_INFO_SCREEN_EXIT",
         "TVC_STORE_ATTRIBUTE_AND_REDRAW",
         "TVC_GAME_KEYS",
         "TVC_MULTILOAD",

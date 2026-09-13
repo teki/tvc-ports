@@ -35,13 +35,13 @@ from rtvc import parse_rtvc_toml, run_tool
 
 
 EXPECTED_PATCHED_CAS = {
-    "LOADER.CAS": ("lasersqd_loader.cas", "819a3a35a8d002ae41071f0155dc30e2db4ae79cad935f9ec64500581852ff76"),
+    "LOADER.CAS": ("lasersqd_loader.cas", "1b845d45895a0dffd44e04acaea9984c5ab91a52852d18c89295a02001339d80"),
     "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "3b8efc05885080fd82704b01b2cc7b3604530871c6637f4ad4fb80235dcddf8f"),
-    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "961ea37f629ee720da1e1913c6112f4ab1a13014c5243cc61a67d81dd20242e8"),
+    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "c1bc9656129a89fcace35fef638f53ea4a529bf30e99c2d904208808d759da52"),
 }
 
 EXPECTED_PATCHED_SIZES = {
-    "LOADER.CAS": 7571,
+    "LOADER.CAS": 7587,
     "LS1.CAS": 2320,
     "LS2.CAS": 22665,
 }
@@ -50,7 +50,7 @@ EXPECTED_PALETTES = bytes((
     0x00, 0x51, 0x54, 0x44,
     0x00, 0x50, 0x54, 0x44,
     0x00, 0x50, 0x51, 0x54,
-    0x00, 0x50, 0x41, 0x44,
+    0x00, 0x15, 0x51, 0x54,
     0x00, 0x51, 0x54, 0x45,
     0x00, 0x54, 0x50, 0x51,
     0x00, 0x15, 0x54, 0x51,
@@ -62,7 +62,7 @@ EXPECTED_INK_PALETTE_MAPS = bytes((
     0, 2, 3, 2, 1, 2, 3, 2,
     0, 2, 3, 3, 1, 2, 3, 1,
     0, 1, 3, 3, 1, 1, 2, 2,
-    0, 3, 1, 1, 2, 3, 1, 1,
+    0, 2, 1, 1, 2, 3, 1, 1,
     0, 3, 1, 1, 1, 3, 2, 1,
 ))
 
@@ -173,6 +173,30 @@ def verify():
         ]
         if actual_maps != EXPECTED_INK_PALETTE_MAPS:
             raise ValueError("LOADER.CAS has unexpected Spectrum ink maps")
+        support_base = symbols["TVC_SUPPORT_IMAGE"]
+        lscode_cas = read_tvc_cas(build_dir / "lasersqd_lscode_5e28_tvc.cas")
+
+        def runtime_support(name):
+            return laser_build.TVC_SUPPORT_ADDR + symbols[name] - support_base
+
+        def lscode_call(addr):
+            offset = addr - 0x5E28
+            return bytes(lscode_cas.payload[offset:offset + 3])
+
+        def expected_call(name):
+            target = runtime_support(name)
+            return bytes((0xCD, target & 0xFF, target >> 8))
+
+        if lscode_call(0x875A) != expected_call("TVC_UNIT_INFO_SCREEN_CLEAR"):
+            raise ValueError("LS2.CAS unit-information entry is not hooked")
+        if lscode_call(0x8875) != expected_call("TVC_UNIT_INFO_SCREEN_EXIT"):
+            raise ValueError("LS2.CAS unit-information exit is not hooked")
+        if lscode_call(0xB1F7) != expected_call("TVC_MOVEMENT_SCREEN_CLEAR"):
+            raise ValueError("LS2.CAS hidden-movement entry is not hooked")
+        if runtime_support("TVC_UNIT_INFO_SCREEN_EXIT") != runtime_support(
+            "TVC_FIRE_SCREEN_EXIT"
+        ):
+            raise ValueError("unit-information and firing exits must share restoration")
         font_offset = symbols["TVC_NATIVE_FONT"] - loader.load_address
         actual_font = loader.payload[font_offset:font_offset + FONT_NATIVE_SIZE]
         if actual_font != expected_font:
