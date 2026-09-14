@@ -35,13 +35,13 @@ from rtvc import parse_rtvc_toml, run_tool
 
 
 EXPECTED_PATCHED_CAS = {
-    "LOADER.CAS": ("lasersqd_loader.cas", "7400c95fe9e1a7744e4c1ea66e2647b38bb35f2435b57f6a8826fb1132b20442"),
+    "LOADER.CAS": ("lasersqd_loader.cas", "95b7d5299d900df5def6c210d97f4e570c205d51c3887312f8ee23811b095859"),
     "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "3b8efc05885080fd82704b01b2cc7b3604530871c6637f4ad4fb80235dcddf8f"),
-    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "a933b2f442f673d516de5015b2fb8bb679d43f654a96ae4f1bd1420e02d6fa73"),
+    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "65fb4de0f55b1ed984a382aac2f4311adfbb96af380d8fafc7851d341809871b"),
 }
 
 EXPECTED_PATCHED_SIZES = {
-    "LOADER.CAS": 7555,
+    "LOADER.CAS": 7715,
     "LS1.CAS": 2320,
     "LS2.CAS": 22665,
 }
@@ -210,6 +210,28 @@ def verify():
             raise ValueError("LS2.CAS cursor control is not hooked to the TVC joystick")
         if lscode_call(0xB136) != expected_jump("TVC_GAME_KEYS"):
             raise ValueError("LS2.CAS keyboard control is not hooked")
+        save_entry = symbols["TVC_SAVELOAD"]
+        if lscode_call(0xB15C) != bytes((0xC3, save_entry & 0xFF, save_entry >> 8)):
+            raise ValueError("LS2.CAS save/load entry is not hooked")
+        multiload_offset = symbols["TVC_MULTILOAD"] - loader.load_address
+        if loader.payload[multiload_offset:multiload_offset + 2] != b"\xfe\x64":
+            raise ValueError("TVC_MULTILOAD does not start from the block ID in A")
+        if symbols["TVC_NATIVE_FONT_END"] > laser_build.TVC_SUPPORT_ADDR:
+            raise ValueError("native font overlaps resident support")
+        if not (
+            support_base
+            <= symbols["TVC_COPY_SAFE_AND"]
+            < symbols["TVC_SUPPORT_IMAGE_END"]
+        ):
+            raise ValueError("native color masks must remain in resident U0 support")
+        save_header = symbols["TVC_SAVE_HEADER"] - loader.load_address
+        if loader.payload[save_header:save_header + 16] != (
+            b"\x00\x00\xdf\x49" + bytes(12)
+        ):
+            raise ValueError("LOADER.CAS save header is not a 49DFH data file")
+        save_name = symbols["TVC_SAVE_NAME"] - loader.load_address
+        if loader.payload[save_name:save_name + 5] != b"\x04SAVE":
+            raise ValueError("LOADER.CAS save slot is not SAVE.CAS")
         font_offset = symbols["TVC_NATIVE_FONT"] - loader.load_address
         actual_font = loader.payload[font_offset:font_offset + FONT_NATIVE_SIZE]
         if actual_font != expected_font:

@@ -47,7 +47,7 @@ FIRST_BLOCK_ADDR = 0x7530
 SECOND_BLOCK_ADDR = 0x5E28
 FIRST_BLOCK_DISK_NAME = "LS1.CAS"
 SECOND_BLOCK_DISK_NAME = "LS2.CAS"
-TVC_SUPPORT_ADDR = 0x2120
+TVC_SUPPORT_ADDR = 0x21BC
 TVC_HIDDEN_VIDEO_SIZE = 0x1000
 MULTILOAD_BLOCKS = {
     "L64": 6,
@@ -173,6 +173,8 @@ def build_loader_cas(first_block_size, second_block_size, native_font):
     font_end = symbols["TVC_NATIVE_FONT_END"]
     if font_end - font_start != FONT_NATIVE_SIZE:
         raise ValueError("loader native-font reservation has the wrong size")
+    if font_end > TVC_SUPPORT_ADDR:
+        raise ValueError("loader native font overlaps resident TVC support")
     if len(native_font) != FONT_NATIVE_SIZE:
         raise ValueError("converted native font has the wrong size")
     cas = read_tvc_cas(LOADER_CAS)
@@ -244,6 +246,7 @@ def loader_support_addresses():
         name: TVC_SUPPORT_ADDR + symbols[name] - source_base
         for name in names
     }
+    addresses["TVC_SAVELOAD"] = symbols["TVC_SAVELOAD"]
     addresses["TVC_DRAW_LARGE_LOOKUP_MAPPED"] = symbols[
         "TVC_DRAW_LARGE_LOOKUP_MAPPED_RUN"
     ]

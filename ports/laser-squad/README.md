@@ -40,6 +40,9 @@ python3 verify.py
 ```
 
 Generated `build/` and `dist/` files are ignored.
+The game menu's Save option writes one `SAVE.CAS` slot to the mounted DSK;
+Load Game then scenario 4 reads it. Keep a copy of the DSK if you want to
+retain that save across `build.py`, which recreates the image.
 
 ## Port Documentation
 

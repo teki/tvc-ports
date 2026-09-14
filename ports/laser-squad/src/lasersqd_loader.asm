@@ -48,15 +48,12 @@
         CALL LOAD_BLOCK
         JR NZ,LOADER_DONE
 
-        ; The support source overlaps its higher 2120H destination. Copy
-        ; backward so relocation cannot overwrite source bytes still to read.
-        LD HL,TVC_SUPPORT_IMAGE_END
-        DEC HL
-        LD DE,TVC_SUPPORT_RUN+TVC_SUPPORT_IMAGE_END-TVC_SUPPORT_IMAGE
-        DEC DE
+        ; The support image is resident immediately after the native font.
+        LD HL,TVC_SUPPORT_IMAGE
+        LD DE,TVC_SUPPORT_RUN
         LD BC,TVC_SUPPORT_IMAGE_END-TVC_SUPPORT_IMAGE
 TVC_SUPPORT_COPY_DIRECTION:
-        LDDR
+        LDIR
         CALL 5E28H
 
 LOADER_DONE:
@@ -153,7 +150,103 @@ LOAD_NATIVE_GRAPHICS_CLOSE:
         OR A
         RET
 
-TVC_SUPPORT_RUN EQU 2120H
+; B15CH's original interface: A=0 save, A=1 load, A=2 verify;
+; B is the tape block ID (67H is the saved game). Keep the original status
+; byte at B15BH, which B1C3H checks after a load.
+TVC_SAVELOAD:
+        LD (0B1C2H),A
+        LD C,A
+        LD A,01H
+        LD (0B15BH),A
+        LD A,C
+        OR A
+        JR Z,TVC_SAVE_GAME
+        CP 01H
+        RET NZ                  ; original verify mode remains unsupported
+        LD A,B                  ; scenario IDs stay in A for TVC_MULTILOAD
+        CP 67H
+        JP NZ,TVC_SUPPORT_RUN+TVC_MULTILOAD-TVC_SUPPORT_IMAGE
+
+TVC_LOAD_SAVED:
+        CALL TVC_MAP_GAME_PAYLOAD
+        LD DE,TVC_SAVE_NAME
+        LD BC,49DFH
+        LD HL,0B621H
+        CALL LOAD_BLOCK
+        OR A
+        RET NZ
+        ; SAVE.CAS carries the original Spectrum bytes. Regenerate the native
+        ; descriptor cache from E79FH/E8DFH before the game draws again.
+        LD A,01H
+        LD (TVC_LARGE_TABLE_LOADED_RUN),A
+        LD A,0FFH
+        LD (TVC_LARGE_TABLE_PALETTE_RUN),A
+        CALL TVC_REBUILD_LARGE_TABLE_RUN
+        XOR A
+        LD (0B15BH),A
+        RET
+
+TVC_SAVE_GAME:
+        CALL TVC_MAP_GAME_PAYLOAD
+        LD A,50H               ; device 5, disk output
+        LD (1705H),A
+        XOR A
+        LD (0B6BH),A           ; non-buffered access
+        LD DE,TVC_SAVE_NAME
+        LD A,53H               ; open for output
+        CALL 001BH
+        OR A
+        RET NZ
+
+        LD HL,TVC_SAVE_HEADER
+        LD B,10H
+TVC_SAVE_HEADER_NEXT:
+        LD C,(HL)
+        PUSH BC
+        PUSH HL
+        LD A,51H               ; character output
+        CALL 001BH
+        POP HL
+        POP BC
+        OR A
+        JR NZ,TVC_SAVE_CLOSE
+        INC HL
+        DJNZ TVC_SAVE_HEADER_NEXT
+
+        LD BC,49DFH
+        LD DE,0B621H
+        LD A,52H               ; block output
+        CALL 001BH
+TVC_SAVE_CLOSE:
+        PUSH AF
+        LD A,54H               ; close output file
+        CALL 001BH
+        LD C,A
+        POP AF
+        OR C
+        RET NZ
+        XOR A
+        LD (0B15BH),A
+        RET
+
+TVC_MAP_GAME_PAYLOAD:
+        LD A,(0003H)
+        AND 1FH
+        OR 0A0H               ; U2 and U3, including B621H-FFFFH
+        LD (0003H),A
+        OUT (02H),A
+        RET
+
+TVC_SAVE_NAME:
+        DB 4,"SAVE"
+TVC_SAVE_HEADER:
+        DB 00H                 ; reserved application-header marker
+        DB 00H                 ; data file type
+        DW 49DFH              ; original payload length
+        DB 00H                 ; no autorun
+        DS 11,00H              ; remaining application-header fields
+
+TVC_SUPPORT_RUN EQU 21BCH
 TVC_LARGE_NATIVE_LOW_RUN EQU 2880H
 TVC_LARGE_NATIVE_LOW_SIZE EQU 1640H ; 89 glyphs * 64 bytes
 TVC_LARGE_NATIVE_SCRATCH_RUN EQU 3EC0H ; one converted raw-glyph fallback
@@ -170,7 +263,7 @@ TVC_NATIVE_FONT:
         DEFS 0600H
 TVC_NATIVE_FONT_END:
 
-; Relocatable support copied to U0 RAM at 2120H after LSCODE is loaded. Page 0
+; Relocatable support copied to U0 RAM at 21BCH after LSCODE is loaded. Page 0
 ; remains mapped to U0 in the BASIC/game map, giving the port enough room for
 ; the original keyboard and graphics entry-point replacements. Keep absolute
 ; references inside this image limited to fixed game/TVC addresses; branches
@@ -505,13 +598,9 @@ TVC_GAME_KEYS_DONE:
         LD A,E
         RET
 
-; Replacement for B15CH mode 1: load the selected original 49DFH-byte scenario
-; payload directly across U2/U3 at B621H-FFFFH. The page-0 LOAD_BLOCK routine
-; remains accessible while VT-DOS temporarily obtains its ROM mappings.
+; Replacement for B15CH mode 1 scenario IDs. TVC_SAVELOAD already rejected
+; save/verify and ID 67H; A and B both hold the selected block ID.
 TVC_MULTILOAD:
-        CP 01H
-        JP NZ,TVC_MULTILOAD_FAIL_RUN ; save/verify modes remain unported
-        LD A,B
         CP 64H
         JR Z,TVC_MULTILOAD_64
         CP 65H
@@ -812,12 +901,10 @@ TVC_PREPARE_NATIVE_COLOR_RUN EQU TVC_SUPPORT_RUN+TVC_PREPARE_NATIVE_COLOR-TVC_SU
         LD HL,0B239H
         ADD HL,DE
         LD A,(HL)
-        LD (TVC_COPY_SAFE_AND_1_RUN+1),A
-        LD (TVC_COPY_SAFE_AND_2_RUN+1),A
+        LD (TVC_COPY_SAFE_AND_RUN),A
         INC HL
         LD A,(HL)
-        LD (TVC_COPY_SAFE_XOR_1_RUN+1),A
-        LD (TVC_COPY_SAFE_XOR_2_RUN+1),A
+        LD (TVC_COPY_SAFE_XOR_RUN),A
         RET
 
 ; Input A = character row, C = byte column. Output HL = 5800H attribute.
@@ -995,43 +1082,6 @@ TVC_COPY_DOUBLE_ROW:
         LD A,(TVC_NATIVE_MAPPER_RUN)
         LD (0003H),A
         OUT (02H),A
-        RET
-
-TVC_COLOR_NATIVE_BYTE:
-TVC_COLOR_NATIVE_BYTE_RUN EQU TVC_SUPPORT_RUN+TVC_COLOR_NATIVE_BYTE-TVC_SUPPORT_IMAGE
-        LD C,A
-        LD A,(TVC_COPY_SAFE_AND_1_RUN+1)
-        AND C
-        LD C,A
-        LD A,(TVC_COPY_SAFE_XOR_1_RUN+1)
-        XOR C
-        RET
-
-; DE addresses the first byte of a raster. Write the saved pair twice and
-; advance DE to the following source row (two TVC rasters later).
-TVC_WRITE_DOUBLE_ROW:
-TVC_WRITE_DOUBLE_ROW_RUN EQU TVC_SUPPORT_RUN+TVC_WRITE_DOUBLE_ROW-TVC_SUPPORT_IMAGE
-        LD A,(TVC_NATIVE_BYTE_1_RUN)
-        LD (DE),A
-        INC DE
-        LD A,(TVC_NATIVE_BYTE_2_RUN)
-        LD (DE),A
-        LD A,E
-        ADD A,3FH
-        LD E,A
-        JR NC,TVC_WRITE_DOUBLE_SECOND
-        INC D
-TVC_WRITE_DOUBLE_SECOND:
-        LD A,(TVC_NATIVE_BYTE_1_RUN)
-        LD (DE),A
-        INC DE
-        LD A,(TVC_NATIVE_BYTE_2_RUN)
-        LD (DE),A
-        LD A,E
-        ADD A,3FH
-        LD E,A
-        RET NC
-        INC D
         RET
 
 TVC_DRAW_DOUBLE:
@@ -1238,62 +1288,6 @@ TVC_PLOT_RESTORE:
         POP AF
         RET
 
-; Return the current GRAPHICS 4 slot for the selected pixel in A.
-TVC_PIXEL_CURRENT_SLOT:
-TVC_PIXEL_CURRENT_SLOT_RUN EQU TVC_SUPPORT_RUN+TVC_PIXEL_CURRENT_SLOT-TVC_SUPPORT_IMAGE
-        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
-        LD C,A
-        AND 0F0H
-        LD B,A
-        LD A,(TVC_PIXEL_OLD_BYTE_RUN)
-        AND B
-        JR Z,TVC_PIXEL_NO_BIT_0
-        LD E,01H
-        JR TVC_PIXEL_BIT_1
-TVC_PIXEL_NO_BIT_0:
-        LD E,00H
-TVC_PIXEL_BIT_1:
-        LD A,C
-        AND 0FH
-        LD B,A
-        LD A,(TVC_PIXEL_OLD_BYTE_RUN)
-        AND B
-        JR Z,TVC_PIXEL_SLOT_DONE
-        SET 1,E
-TVC_PIXEL_SLOT_DONE:
-        LD A,E
-        RET
-
-; Input A = target slot. Replace only the selected pixel in the VID0 byte.
-TVC_PIXEL_WRITE_SLOT:
-TVC_PIXEL_WRITE_SLOT_RUN EQU TVC_SUPPORT_RUN+TVC_PIXEL_WRITE_SLOT-TVC_SUPPORT_IMAGE
-        LD E,A
-        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
-        CPL
-        LD C,A
-        LD A,(TVC_PIXEL_OLD_BYTE_RUN)
-        AND C
-        LD C,A
-        LD A,E
-        BIT 0,A
-        JR Z,TVC_PIXEL_WRITE_BIT_1
-        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
-        AND 0F0H
-        OR C
-        LD C,A
-TVC_PIXEL_WRITE_BIT_1:
-        LD A,E
-        BIT 1,A
-        JR Z,TVC_PIXEL_WRITE_DONE
-        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
-        AND 0FH
-        OR C
-        LD C,A
-TVC_PIXEL_WRITE_DONE:
-        LD HL,(TVC_PIXEL_ADDRESS_RUN)
-        LD (HL),C
-        RET
-
 ; Recolor one cell after the game changes only its Spectrum attribute. Input
 ; A=row, C=column, B=old attribute, E=new attribute.
 TVC_RECOLOR_ATTRIBUTE_CELL:
@@ -1362,40 +1356,6 @@ TVC_RECOLOR_NEXT:
         LD A,(TVC_NATIVE_MAPPER_RUN)
         LD (0003H),A
         OUT (02H),A
-        RET
-
-; Proven looped fallback for paper/inverse attributes and large graphics.
-; Precolored black-paper fonts bypass this through the hidden direct copier.
-TVC_COPY_NATIVE_CELL_SAFE:
-TVC_COPY_NATIVE_CELL_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_NATIVE_CELL_SAFE-TVC_SUPPORT_IMAGE
-        LD B,08H
-TVC_COPY_SAFE_ROW:
-        LD A,(HL)
-TVC_COPY_SAFE_AND_1:
-TVC_COPY_SAFE_AND_1_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_AND_1-TVC_SUPPORT_IMAGE
-        AND 00H
-TVC_COPY_SAFE_XOR_1:
-TVC_COPY_SAFE_XOR_1_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_XOR_1-TVC_SUPPORT_IMAGE
-        XOR 00H
-        LD (DE),A
-        INC HL
-        INC DE
-        LD A,(HL)
-TVC_COPY_SAFE_AND_2:
-TVC_COPY_SAFE_AND_2_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_AND_2-TVC_SUPPORT_IMAGE
-        AND 00H
-TVC_COPY_SAFE_XOR_2:
-TVC_COPY_SAFE_XOR_2_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_XOR_2-TVC_SUPPORT_IMAGE
-        XOR 00H
-        LD (DE),A
-        INC HL
-        LD A,E
-        ADD A,3FH
-        LD E,A
-        JR NC,TVC_COPY_SAFE_NEXT
-        INC D
-TVC_COPY_SAFE_NEXT:
-        DJNZ TVC_COPY_SAFE_ROW
         RET
 
 ; Writable state kept inside the relocated support image. The native large
@@ -1474,6 +1434,14 @@ TVC_RECOLOR_DELTA_RUN EQU TVC_SUPPORT_RUN+TVC_RECOLOR_DELTA-TVC_SUPPORT_IMAGE
         DB 00H
 TVC_RECOLOR_NEW_ATTRIBUTE:
 TVC_RECOLOR_NEW_ATTRIBUTE_RUN EQU TVC_SUPPORT_RUN+TVC_RECOLOR_NEW_ATTRIBUTE-TVC_SUPPORT_IMAGE
+        DB 00H
+; Color masks must stay in U0. PREPARE reads the B239H table while page 2 is
+; still U2, so hidden-VID0 immediates cannot hold these bytes.
+TVC_COPY_SAFE_AND:
+TVC_COPY_SAFE_AND_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_AND-TVC_SUPPORT_IMAGE
+        DB 00H
+TVC_COPY_SAFE_XOR:
+TVC_COPY_SAFE_XOR_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_XOR-TVC_SUPPORT_IMAGE
         DB 00H
 
 TVC_SUPPORT_IMAGE_END:
@@ -1716,10 +1684,10 @@ TVC_COPY_LARGE_ROW_15:
 
 TVC_COPY_NATIVE_SELECTED:
 TVC_COPY_NATIVE_SELECTED_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_COPY_NATIVE_SELECTED-TVC_HIDDEN_CODE_IMAGE
-        LD A,(TVC_COPY_SAFE_XOR_1_RUN+1)
+        LD A,(TVC_COPY_SAFE_XOR_RUN)
         OR A
         JP NZ,TVC_COPY_NATIVE_CELL_RUN
-        LD A,(TVC_COPY_SAFE_AND_1_RUN+1)
+        LD A,(TVC_COPY_SAFE_AND_RUN)
         CP 0FFH
         JP Z,TVC_COPY_NATIVE_DIRECT_RUN
         JP TVC_COPY_NATIVE_CELL_RUN
@@ -1956,4 +1924,132 @@ TVC_CONVERT_LARGE_PAPER_2_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_CONVERT_LARGE_PAPER_2-
 TVC_LARGE_REBUILD_COUNT:
 TVC_LARGE_REBUILD_COUNT_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_LARGE_REBUILD_COUNT-TVC_HIDDEN_CODE_IMAGE
         DB 00H
+; Helpers called only while VID0 is mapped, kept with the hidden renderer.
+TVC_COLOR_NATIVE_BYTE:
+TVC_COLOR_NATIVE_BYTE_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_COLOR_NATIVE_BYTE-TVC_HIDDEN_CODE_IMAGE
+        LD C,A
+        LD A,(TVC_COPY_SAFE_AND_RUN)
+        AND C
+        LD C,A
+        LD A,(TVC_COPY_SAFE_XOR_RUN)
+        XOR C
+        RET
+
+; DE addresses the first byte of a raster. Write the saved pair twice and
+; advance DE to the following source row (two TVC rasters later).
+TVC_WRITE_DOUBLE_ROW:
+TVC_WRITE_DOUBLE_ROW_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_WRITE_DOUBLE_ROW-TVC_HIDDEN_CODE_IMAGE
+        LD A,(TVC_NATIVE_BYTE_1_RUN)
+        LD (DE),A
+        INC DE
+        LD A,(TVC_NATIVE_BYTE_2_RUN)
+        LD (DE),A
+        LD A,E
+        ADD A,3FH
+        LD E,A
+        JR NC,TVC_WRITE_DOUBLE_SECOND
+        INC D
+TVC_WRITE_DOUBLE_SECOND:
+        LD A,(TVC_NATIVE_BYTE_1_RUN)
+        LD (DE),A
+        INC DE
+        LD A,(TVC_NATIVE_BYTE_2_RUN)
+        LD (DE),A
+        LD A,E
+        ADD A,3FH
+        LD E,A
+        RET NC
+        INC D
+        RET
+
+; Return the current GRAPHICS 4 slot for the selected pixel in A.
+TVC_PIXEL_CURRENT_SLOT:
+TVC_PIXEL_CURRENT_SLOT_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_PIXEL_CURRENT_SLOT-TVC_HIDDEN_CODE_IMAGE
+        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
+        LD C,A
+        AND 0F0H
+        LD B,A
+        LD A,(TVC_PIXEL_OLD_BYTE_RUN)
+        AND B
+        JR Z,TVC_PIXEL_NO_BIT_0
+        LD E,01H
+        JR TVC_PIXEL_BIT_1
+TVC_PIXEL_NO_BIT_0:
+        LD E,00H
+TVC_PIXEL_BIT_1:
+        LD A,C
+        AND 0FH
+        LD B,A
+        LD A,(TVC_PIXEL_OLD_BYTE_RUN)
+        AND B
+        JR Z,TVC_PIXEL_SLOT_DONE
+        SET 1,E
+TVC_PIXEL_SLOT_DONE:
+        LD A,E
+        RET
+
+; Input A = target slot. Replace only the selected pixel in the VID0 byte.
+TVC_PIXEL_WRITE_SLOT:
+TVC_PIXEL_WRITE_SLOT_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_PIXEL_WRITE_SLOT-TVC_HIDDEN_CODE_IMAGE
+        LD E,A
+        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
+        CPL
+        LD C,A
+        LD A,(TVC_PIXEL_OLD_BYTE_RUN)
+        AND C
+        LD C,A
+        LD A,E
+        BIT 0,A
+        JR Z,TVC_PIXEL_WRITE_BIT_1
+        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
+        AND 0F0H
+        OR C
+        LD C,A
+TVC_PIXEL_WRITE_BIT_1:
+        LD A,E
+        BIT 1,A
+        JR Z,TVC_PIXEL_WRITE_DONE
+        LD A,(TVC_PIXEL_PLANES_MASK_RUN)
+        AND 0FH
+        OR C
+        LD C,A
+TVC_PIXEL_WRITE_DONE:
+        LD HL,(TVC_PIXEL_ADDRESS_RUN)
+        LD (HL),C
+        RET
+
+; Proven looped fallback for paper/inverse attributes and large graphics.
+; Precolored black-paper fonts bypass this through the hidden direct copier.
+TVC_COPY_NATIVE_CELL_SAFE:
+TVC_COPY_NATIVE_CELL_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_COPY_NATIVE_CELL_SAFE-TVC_HIDDEN_CODE_IMAGE
+        LD B,08H
+TVC_COPY_SAFE_ROW:
+        LD A,(HL)
+        LD C,A
+        LD A,(TVC_COPY_SAFE_AND_RUN)
+        AND C
+        LD C,A
+        LD A,(TVC_COPY_SAFE_XOR_RUN)
+        XOR C
+        LD (DE),A
+        INC HL
+        INC DE
+        LD A,(HL)
+        LD C,A
+        LD A,(TVC_COPY_SAFE_AND_RUN)
+        AND C
+        LD C,A
+        LD A,(TVC_COPY_SAFE_XOR_RUN)
+        XOR C
+        LD (DE),A
+        INC HL
+        LD A,E
+        ADD A,3FH
+        LD E,A
+        JR NC,TVC_COPY_SAFE_NEXT
+        INC D
+TVC_COPY_SAFE_NEXT:
+        DJNZ TVC_COPY_SAFE_ROW
+        RET
+
 TVC_HIDDEN_CODE_IMAGE_END:

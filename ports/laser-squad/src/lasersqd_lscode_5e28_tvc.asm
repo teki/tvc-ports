@@ -64,7 +64,7 @@
         CALL %TVC_UNIT_INFO_SCREEN_EXIT%
 
         ORG 0B15CH
-        JP %TVC_MULTILOAD%     ; preserve selector, replace tape transport
+        JP %TVC_SAVELOAD%      ; preserve menu selector, replace tape transport
 
         ORG 0B1F7H
         CALL %TVC_MOVEMENT_SCREEN_CLEAR% ; hidden-movement phase palette

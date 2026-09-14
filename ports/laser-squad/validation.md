@@ -99,7 +99,7 @@ runtime loading.
   selection call must advance.
 - **Interrupt/drawing:** allow the shopping screen to draw with interrupts
   active. Coordinates must remain in range, the stack must stay below `4000H`,
-  and the installed support image at `2120H-284FH` must not be modified by
+  and the installed support image at `21BCH-2852H` must not be modified by
   drawing.
 - **Gameplay input:** verify `Q`, `A`, `O`, `P`, and Space through the
   store/tactical control path, not only in menus. Control-selection options
@@ -130,18 +130,26 @@ runtime loading.
   producing 48 four-raster rows (192 active lines). The title, scenario, and
   control-selection screens must render cleanly; frame timing, start address,
   and cursor IRQ settings remain unchanged.
-- **Support relocation:** the loader-resident support source at
-  `211EH-284DH` overlaps its higher `2120H-284FH` runtime destination. The
-  loader must use backward `LDDR`, and the installed 1,840-byte image must
-  match the generated support TOML before entering the main game.
+- **Support placement:** the loader support source and resident destination
+  both occupy `21BCH-2852H`. Its `LDIR` is in place, the 1,687-byte image must
+  match the generated support TOML, and the `1BBCH-21BBH` native font must
+  remain below it.
 - **Hidden native fonts:** before the first VT-DOS call, VID0 offsets
   `3000H-35FFH` and `3600H-3BFFH` must match the offline slot-1/slot-2 font
-  variants, and `3C00H-3E93H` must match the hidden drawing/conversion code.
+  variants, and `3C00H-3F2EH` must match the hidden drawing/conversion code.
   Screen clears must leave the complete `3000H-3FFFH` tail unchanged.
 - **Multi-load:** verify the direct payload at `B621H-FFFFH` matches the
   selected original TAP block. Verify the matching `Gxx.CAS` is then loaded as
   `1640H` bytes at `2880H` and `1800H` bytes at `4000H`, with both ranges equal
   to the offline conversion of that scenario's `E8DFH-FFFEH` table.
+- **Save/load:** from the game option menu, press `2`. The mounted writable DSK
+  must contain one `SAVE.CAS` with a 16-byte data-file header and `49DFH`
+  payload identical to the pre-save `B621H-FFFFH` memory. Saving again must
+  update that slot. Press `3`, then choose scenario `4` (saved game): the
+  payload must be restored, `B15BH` must be `00H`, and the native large-glyph
+  cache must match the restored `E79FH`/`E8DFH` source. Removing the save file
+  must leave `B15BH` nonzero on load. Rebuilding the generated DSK starts with
+  no save slot.
 
 ## Unsplit Multi-load Validation
 
@@ -247,5 +255,3 @@ Protek/AGF/cursor (`B117H`) all returned the same TVC joystick action byte:
 
 Option 4 remains the keyboard handler. Interactive play with a host joystick or
 arrow keys plus Tab is a manual regression.
-
-

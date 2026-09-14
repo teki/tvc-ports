@@ -163,7 +163,7 @@ USR(6704)` entry. With breakpoints on both original entry addresses, the
 debugger first stopped at `7530H` after the named `LS1.CAS` load, then at
 `5E28H` after the first stage returned and the named `LS2.CAS` load completed.
 The restored `LS2TVC.BIN` is exactly `57F9H` bytes, matching the original
-`LSCODE` block. Current patches place TVC support in page-0 U0 RAM at `2120H`,
+`LSCODE` block. Current patches place TVC support in page-0 U0 RAM at `21BCH`,
 change the immediate border port at `5E38H` from Spectrum `FEH` to TVC `00H`,
 and redirect the numeric-key and Spectrum graphics entry points to it.
 
@@ -202,7 +202,7 @@ system loads and calls its first overlay there.
 The original entry at `5E28H` disables interrupts, clears its workspace at
 `5B00H-5E25H`, selects a black Spectrum border, sets the stack to `5E39H`, and
 jumps to the original initializer at `B1C3H`. The current overlay retains that
-original workspace clear, places TVC support in page-0 U0 RAM at `2120H`, and
+original workspace clear, places TVC support in page-0 U0 RAM at `21BCH`, and
 translates the border output to TVC port `00H`.
 
 An end-to-end TVC debugger trace reached these original routines in order:
@@ -301,6 +301,26 @@ The initial blocks and scenario payloads share the assembly `LOAD_BLOCK`
 implementation resident in U0. A direct emulator call with mode 1 and ID
 `64H` reached the success return. The mapped memory at `B621H-FFFFH` was then
 compared byte-for-byte with original TAP block 6; all `49DFH` bytes matched.
+
+### Disk save slot
+
+The original `B15CH` interface remains the boundary for menu save and load.
+`B15CH` now jumps to loader-resident `TVC_SAVELOAD`, which keeps the original
+mode in `A` and block ID in `B`. Mode 0 writes the live `49DFH` bytes at
+`B621H-FFFFH` to `SAVE.CAS` on the mounted DSK; mode 1 with ID `67H` reads that
+same file back. Other mode-1 IDs keep that block ID in `A` and enter
+`TVC_MULTILOAD`, which selects the scenario file from it. The file has the
+normal 144-byte CAS outer container and 16-byte data-file application header.
+The menu's existing state update at `71D7H` still runs before the save call.
+VT-DOS replaces the one slot when Save is selected again. A saved-game load
+rebuilds the native large-glyph cache from the restored `E79FH` descriptors
+and `E8DFH` source glyphs before setting the original `B15BH` success flag.
+The original verify mode 2 is still pending.
+
+A TVC 1.2 VT-DOS GUI run from `lsq-menu.rtvcsnap.zip` created `SAVE.CAS` and
+the saved payload matched the pre-save `B621H-FFFFH` memory byte-for-byte.
+The generated DSK is writable at runtime; running `build.py` creates a fresh
+image and removes its local save slot.
 
 Known multiload TVC games often use BASIC only for the first program/bootstrap,
 then let machine code perform later loads through ROM cassette routines. The
@@ -709,9 +729,10 @@ destination: source `1AB2H-21B1H` and destination `2000H-26FFH`. The original
 forward `LDIR` therefore copied correctly only until its destination caught
 its source, then replicated already-overwritten bytes into the later drawing
 support. This explains why the separately loaded title screen remained good
-while subsequent screens were corrupt. Startup now initializes `HL` and `DE`
-to the ends of those ranges and uses `LDDR`; the build checks the relocation
-opcode whenever the ranges overlap.
+while subsequent screens were corrupt. That earlier layout used `LDDR` to
+protect the overlapping copy. The current layout places support source and
+destination together at `21BCH`, so its `LDIR` is an in-place copy; the build
+checks the direction again if the ranges move apart and overlap later.
 
 ### Native main-game graphics
 
@@ -726,18 +747,23 @@ The converted memory layout on a 64K TVC is:
 
 | Range | Size | Use |
 | --- | ---: | --- |
-| `1B1EH-211DH` | `0600H` | Loader-resident slot-3 native font codes `20H-7FH` |
-| `2120H-284FH` | `0730H` | Relocated TVC runtime support |
+| `1BBC-21BBH` | `0600H` | Loader-resident slot-3 native font codes `20H-7FH` |
+| `21BC-2852H` | `0697H` | TVC runtime support and writable state |
 | `2880H-3EBFH` | `1640H` | First 89 native large glyphs |
 | `4000H-57FFH` | `1800H` | Remaining 96 native large glyphs |
 | `5800H-5AFFH` | `0300H` | Spectrum attribute state retained for game logic |
 | `5B00H-FFFFH` | — | Original game workspace/code and scenario payload |
 
 The undisplayed tail of VID0 holds two more offline-colored font variants and
-their drawing code: slot 1 at `3000H-35FFH`, slot 2 at `3600H-3BFFH`, and 660
-bytes of code at `3C00H-3E93H`. The installed 3,732-byte payload fits inside
+their drawing code: slot 1 at `3000H-35FFH`, slot 2 at `3600H-3BFFH`, and 815
+bytes of code at `3C00H-3F2EH`. The installed 3,887-byte payload fits inside
 the reserved 4 KiB. Installation happens before the first VT-DOS operation,
 and the build rejects overlap with the end of VID0.
+
+The native color AND/XOR masks remain in the U0 support image. Preparing a
+cell reads the original `B239H` table while page 2 is still U2, so patching
+hidden-VID0 immediates would write into game RAM and leave the copy loop
+uncolored. Mapped drawing helpers still run from the VID0 tail.
 
 `SP=4000H` grows downward with `140H` (320 bytes) clear between the stack top
 and the low native table. The high table deliberately occupies the retired
@@ -835,7 +861,7 @@ branches or fidelity work that have not been exhaustively validated:
 - Exercise every scenario and expansion branch. In particular, trace the later
   repeated `68H` requests so TAP blocks 10-12 are selected in their original
   sequence; the first `68H` request currently uses block 9.
-- Port `B15CH` save/verify modes 0 and 2 used by saved-game handling.
+- Port `B15CH` verify mode 2 used by saved-game handling.
 - Investigate TVC cassette copy-protection behavior: a normal `SAVE` program
   file has a 16-byte internal header, but multiload machine-code blocks may use
   lower-level ROM cassette block reads or non-standard block metadata.
