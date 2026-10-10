@@ -35,13 +35,13 @@ from rtvc import parse_rtvc_toml, run_tool
 
 
 EXPECTED_PATCHED_CAS = {
-    "LOADER.CAS": ("lasersqd_loader.cas", "95b7d5299d900df5def6c210d97f4e570c205d51c3887312f8ee23811b095859"),
+    "LOADER.CAS": ("lasersqd_loader.cas", "76b242060dd80d4919c986107330c1e9faf701d3057c6ac34e13a2ef37d16e44"),
     "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "3b8efc05885080fd82704b01b2cc7b3604530871c6637f4ad4fb80235dcddf8f"),
-    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "65fb4de0f55b1ed984a382aac2f4311adfbb96af380d8fafc7851d341809871b"),
+    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "3afae8073ab6ef291a2a1ed868968dce79138ca5f17ea11abbe35322d30a9541"),
 }
 
 EXPECTED_PATCHED_SIZES = {
-    "LOADER.CAS": 7715,
+    "LOADER.CAS": 7793,
     "LS1.CAS": 2320,
     "LS2.CAS": 22665,
 }

@@ -49,11 +49,18 @@
         JR NZ,LOADER_DONE
 
         ; The support image is resident immediately after the native font.
-        LD HL,TVC_SUPPORT_IMAGE
+        ; Copy backward so a source that starts below 21BCH cannot be
+        ; overwritten by the destination before it is read.
+        LD HL,TVC_SUPPORT_IMAGE_END
+        DEC HL
         LD DE,TVC_SUPPORT_RUN
         LD BC,TVC_SUPPORT_IMAGE_END-TVC_SUPPORT_IMAGE
+        EX DE,HL
+        ADD HL,BC
+        DEC HL
+        EX DE,HL
 TVC_SUPPORT_COPY_DIRECTION:
-        LDIR
+        LDDR
         CALL 5E28H
 
 LOADER_DONE:
@@ -94,6 +101,7 @@ LOAD_BLOCK_CLOSE:
         LD A,(1705H)
         OR 04H                  ; D4H: close
         CALL 001BH
+        DI                      ; title runs before the relocated DOS epilogue exists
         POP AF
         OR A
         RET
@@ -115,7 +123,7 @@ LOAD_NATIVE_GRAPHICS:
         LD A,0D0H
         LD (1705H),A
         OR 03H
-        CALL 001BH
+        CALL TVC_END_DOS_RUN
         OR A
         RET NZ
 
@@ -123,7 +131,7 @@ LOAD_NATIVE_GRAPHICS:
         LD DE,19DFH
         LD A,(1705H)
         OR 82H
-        CALL 001BH
+        CALL TVC_END_DOS_RUN
         OR A
         JR NZ,LOAD_NATIVE_GRAPHICS_CLOSE
 
@@ -131,7 +139,7 @@ LOAD_NATIVE_GRAPHICS:
         LD DE,TVC_LARGE_NATIVE_LOW_RUN
         LD A,(1705H)
         OR 82H
-        CALL 001BH
+        CALL TVC_END_DOS_RUN
         OR A
         JR NZ,LOAD_NATIVE_GRAPHICS_CLOSE
 
@@ -139,13 +147,13 @@ LOAD_NATIVE_GRAPHICS:
         LD DE,TVC_LARGE_NATIVE_HIGH_RUN
         LD A,(1705H)
         OR 82H
-        CALL 001BH
+        CALL TVC_END_DOS_RUN
 
 LOAD_NATIVE_GRAPHICS_CLOSE:
         PUSH AF
         LD A,(1705H)
         OR 04H
-        CALL 001BH
+        CALL TVC_END_DOS_RUN
         POP AF
         OR A
         RET
@@ -168,11 +176,8 @@ TVC_SAVELOAD:
         JP NZ,TVC_SUPPORT_RUN+TVC_MULTILOAD-TVC_SUPPORT_IMAGE
 
 TVC_LOAD_SAVED:
-        CALL TVC_MAP_GAME_PAYLOAD
         LD DE,TVC_SAVE_NAME
-        LD BC,49DFH
-        LD HL,0B621H
-        CALL LOAD_BLOCK
+        CALL TVC_LOAD_GAME_PAYLOAD_RUN
         OR A
         RET NZ
         ; SAVE.CAS carries the original Spectrum bytes. Regenerate the native
@@ -194,7 +199,7 @@ TVC_SAVE_GAME:
         LD (0B6BH),A           ; non-buffered access
         LD DE,TVC_SAVE_NAME
         LD A,53H               ; open for output
-        CALL 001BH
+        CALL TVC_END_DOS_RUN
         OR A
         RET NZ
 
@@ -205,7 +210,7 @@ TVC_SAVE_HEADER_NEXT:
         PUSH BC
         PUSH HL
         LD A,51H               ; character output
-        CALL 001BH
+        CALL TVC_END_DOS_RUN
         POP HL
         POP BC
         OR A
@@ -216,11 +221,11 @@ TVC_SAVE_HEADER_NEXT:
         LD BC,49DFH
         LD DE,0B621H
         LD A,52H               ; block output
-        CALL 001BH
+        CALL TVC_END_DOS_RUN
 TVC_SAVE_CLOSE:
         PUSH AF
         LD A,54H               ; close output file
-        CALL 001BH
+        CALL TVC_END_DOS_RUN
         LD C,A
         POP AF
         OR C
@@ -230,9 +235,7 @@ TVC_SAVE_CLOSE:
         RET
 
 TVC_MAP_GAME_PAYLOAD:
-        LD A,(0003H)
-        AND 1FH
-        OR 0A0H               ; U2 and U3, including B621H-FFFFH
+        LD A,0B0H              ; U0, U1, U2, and U3, including B621H-FFFFH
         LD (0003H),A
         OUT (02H),A
         RET
@@ -269,14 +272,12 @@ TVC_NATIVE_FONT_END:
 ; references inside this image limited to fixed game/TVC addresses; branches
 ; within the copied image are relative.
 TVC_SUPPORT_IMAGE:
-; TVC replacement for the hardware-specific 5E28H entry. The game needs U3 in
-; page 3 for its high-memory data and large glyphs; ROM calls below map SYS only
-; for their duration.
+; TVC replacement for the hardware-specific 5E28H entry. The game needs U0,
+; U1, U2, and U3 together. Firmware interrupts map SYS or the disk ROM over
+; page 3, so play stays with interrupts disabled.
 TVC_MAIN_ENTRY:
         DI
-        LD A,(0003H)
-        AND 3FH
-        OR 80H                  ; U3 in page 3, U2 remains in page 2
+        LD A,0B0H
         LD (0003H),A
         OUT (02H),A
         LD HL,5B00H
@@ -626,14 +627,7 @@ TVC_MULTILOAD_66:
 
 TVC_MULTILOAD_SELECTED:
         LD (TVC_NATIVE_NAME_PTR_RUN),HL
-        LD A,(0003H)
-        AND 1FH
-        OR 0A0H
-        LD (0003H),A
-        OUT (02H),A             ; U2 + U3 direct destination mapping
-        LD BC,49DFH
-        LD HL,0B621H
-        CALL LOAD_BLOCK
+        CALL TVC_LOAD_GAME_PAYLOAD_RUN
         OR A
         JP NZ,TVC_MULTILOAD_FAIL_RUN
         LD DE,(TVC_NATIVE_NAME_PTR_RUN)
@@ -651,9 +645,7 @@ TVC_MULTILOAD_SELECTED:
 
 TVC_MULTILOAD_FAIL:
 TVC_MULTILOAD_FAIL_RUN EQU TVC_SUPPORT_RUN+TVC_MULTILOAD_FAIL-TVC_SUPPORT_IMAGE
-        LD A,(0003H)
-        AND 1FH
-        OR 0A0H                 ; restore U2/U3 game mapping
+        LD A,0B0H               ; U0, U1, U2, U3
         LD (0003H),A
         OUT (02H),A
         XOR A
@@ -1060,27 +1052,11 @@ TVC_DRAW_NATIVE_HALF_DOUBLE_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_NATIVE_HALF_DOUBLE-
         AND 0DFH
         LD (0003H),A
         OUT (02H),A
-        LD HL,(TVC_NATIVE_SOURCE_PTR_RUN)
-        LD A,(TVC_NATIVE_COLUMN_RUN)
-        LD C,A
-        LD A,(TVC_NATIVE_ROW_RUN)
-        CALL TVC_VIDEO_DEST_RUN
-        LD B,04H
-TVC_COPY_DOUBLE_ROW:
-        LD A,(HL)
-        CALL TVC_COLOR_NATIVE_BYTE_RUN
-        LD (TVC_NATIVE_BYTE_1_RUN),A
-        INC HL
-        LD A,(HL)
-        CALL TVC_COLOR_NATIVE_BYTE_RUN
-        LD (TVC_NATIVE_BYTE_2_RUN),A
-        INC HL
-        PUSH HL
-        CALL TVC_WRITE_DOUBLE_ROW_RUN
-        POP HL
-        DJNZ TVC_COPY_DOUBLE_ROW
-        LD A,(TVC_NATIVE_MAPPER_RUN)
-        LD (0003H),A
+        JP TVC_DRAW_NATIVE_HALF_DOUBLE_MAPPED_RUN
+; The VID0 tail jumps here while page 2 is still VID0. Switching back to U2
+; before that jump would fetch the return from game RAM.
+TVC_DRAW_NATIVE_HALF_DOUBLE_RESTORE:
+TVC_DRAW_NATIVE_HALF_DOUBLE_RESTORE_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_NATIVE_HALF_DOUBLE_RESTORE-TVC_SUPPORT_IMAGE
         OUT (02H),A
         RET
 
@@ -1443,6 +1419,84 @@ TVC_COPY_SAFE_AND_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_AND-TVC_SUPPORT_IMAGE
 TVC_COPY_SAFE_XOR:
 TVC_COPY_SAFE_XOR_RUN EQU TVC_SUPPORT_RUN+TVC_COPY_SAFE_XOR-TVC_SUPPORT_IMAGE
         DB 00H
+
+; Read the 49DFH game payload to B621H-FFFFH. VT-DOS selects the 64K+ page-0
+; alias for any transfer that reaches C000H, so every device read stays at or
+; below BFFFH. The U3 half is staged at 2880H. A scenario load replaces that
+; area from Gxx immediately; a saved-game load rebuilds it from E8DFH.
+; Input DE is the length-prefixed filename. Output A matches LOAD_BLOCK.
+TVC_LOAD_GAME_PAYLOAD:
+TVC_LOAD_GAME_PAYLOAD_RUN EQU TVC_SUPPORT_RUN+TVC_LOAD_GAME_PAYLOAD-TVC_SUPPORT_IMAGE
+        LD A,0B0H               ; U0, U1, U2, U3
+        LD (0003H),A
+        OUT (02H),A
+        LD A,0D0H
+        LD (1705H),A
+        OR 03H
+        CALL TVC_END_DOS_RUN
+        OR A
+        RET NZ
+
+        LD BC,0010H
+        LD DE,19DFH
+        CALL TVC_READ_OPEN_BLOCK_RUN
+        OR A
+        JR NZ,TVC_LOAD_GAME_PAYLOAD_CLOSE
+
+        LD BC,0C000H-0B621H     ; 09DFH, last byte BFFF
+        LD DE,0B621H
+        CALL TVC_READ_OPEN_BLOCK_RUN
+        OR A
+        JR NZ,TVC_LOAD_GAME_PAYLOAD_CLOSE
+
+        LD DE,0C000H
+TVC_LOAD_GAME_PAYLOAD_CHUNK:
+        PUSH DE
+        LD BC,1000H
+        LD DE,TVC_LARGE_NATIVE_LOW_RUN
+        CALL TVC_READ_OPEN_BLOCK_RUN
+        POP HL
+        OR A
+        JR NZ,TVC_LOAD_GAME_PAYLOAD_CLOSE
+        ; TVC_END_DOS already restored B0H, so C000H is U3 for this copy.
+        LD D,H
+        LD E,L
+        LD HL,TVC_LARGE_NATIVE_LOW_RUN
+        LD BC,1000H
+        LDIR
+        LD A,D
+        OR E
+        JR NZ,TVC_LOAD_GAME_PAYLOAD_CHUNK
+
+TVC_LOAD_GAME_PAYLOAD_CLOSE:
+        PUSH AF
+        LD A,(1705H)
+        OR 04H
+        CALL TVC_END_DOS_RUN
+        POP AF
+        OR A
+        RET
+
+TVC_READ_OPEN_BLOCK:
+TVC_READ_OPEN_BLOCK_RUN EQU TVC_SUPPORT_RUN+TVC_READ_OPEN_BLOCK-TVC_SUPPORT_IMAGE
+        LD A,(1705H)
+        OR 82H
+        JP TVC_END_DOS_RUN
+
+; VT-DOS returns with interrupts enabled. The firmware IM 1 stub then selects
+; SYS or the disk ROM in page 3, and the command line can run and return to
+; its caller. Laser Squad has no EI of its own. Restore U0/U1/U2/U3 and DI
+; before the next game instruction fetches C000H-FFFFH.
+TVC_END_DOS:
+TVC_END_DOS_RUN EQU TVC_SUPPORT_RUN+TVC_END_DOS-TVC_SUPPORT_IMAGE
+        CALL 001BH
+        PUSH AF
+        DI
+        LD A,0B0H
+        LD (0003H),A
+        OUT (02H),A
+        POP AF
+        RET
 
 TVC_SUPPORT_IMAGE_END:
 
@@ -2051,5 +2105,33 @@ TVC_COPY_SAFE_ROW:
 TVC_COPY_SAFE_NEXT:
         DJNZ TVC_COPY_SAFE_ROW
         RET
+
+; VID0-resident tail of the double-height glyph copy. Page 2 is already VID0.
+; Leave it mapped: the saved mapper is written to (0003H), then control jumps
+; back to U0, which performs the OUT (02H) that selects U2 again.
+TVC_DRAW_NATIVE_HALF_DOUBLE_MAPPED:
+TVC_DRAW_NATIVE_HALF_DOUBLE_MAPPED_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_DRAW_NATIVE_HALF_DOUBLE_MAPPED-TVC_HIDDEN_CODE_IMAGE
+        LD HL,(TVC_NATIVE_SOURCE_PTR_RUN)
+        LD A,(TVC_NATIVE_COLUMN_RUN)
+        LD C,A
+        LD A,(TVC_NATIVE_ROW_RUN)
+        CALL TVC_VIDEO_DEST_RUN
+        LD B,04H
+TVC_COPY_DOUBLE_ROW:
+        LD A,(HL)
+        CALL TVC_COLOR_NATIVE_BYTE_RUN
+        LD (TVC_NATIVE_BYTE_1_RUN),A
+        INC HL
+        LD A,(HL)
+        CALL TVC_COLOR_NATIVE_BYTE_RUN
+        LD (TVC_NATIVE_BYTE_2_RUN),A
+        INC HL
+        PUSH HL
+        CALL TVC_WRITE_DOUBLE_ROW_RUN
+        POP HL
+        DJNZ TVC_COPY_DOUBLE_ROW
+        LD A,(TVC_NATIVE_MAPPER_RUN)
+        LD (0003H),A
+        JP TVC_DRAW_NATIVE_HALF_DOUBLE_RESTORE_RUN
 
 TVC_HIDDEN_CODE_IMAGE_END:

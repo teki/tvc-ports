@@ -282,8 +282,13 @@ The original multiload boundary at `B15CH` prepares a `49DFH`-byte payload at
 original IDs selected by `B1C3H`: `64H`, `65H`, `66H`, and `68H`.
 
 Each original payload is stored as one named CAS containing its unchanged
-`49DFH` bytes. The page-0 loader maps U2 and U3 together, then block-reads the
-selected file directly across `B621H-FFFFH`.
+`49DFH` bytes. The page-0 loader maps U2 and U3 together, then block-reads
+`09DFH` bytes straight to `B621H-BFFFH`. The remaining `4000H` bytes are read
+in `1000H` chunks at `2880H` and copied to `C000H-FFFFH`. VT-DOS uses the
+64K+ page-0 alias for any device transfer that reaches `C000H`, so the loader
+keeps every read at or below `BFFFH`. The staging area is the low native-glyph
+table: the following `Gxx` read replaces it, and a saved-game load rebuilds it
+from `E8DFH`.
 
 After that unchanged payload succeeds, the selector opens one derived
 `G64`/`G65`/`G66`/`G68` file. Two reads from that single file place its first
@@ -292,23 +297,33 @@ After that unchanged payload succeeds, the selector opens one derived
 320 bytes below `SP=4000H`. A direct ID-`64H` test compared the original
 scenario and both native destinations byte-for-byte after the ROM calls.
 
+Every device call returns through `TVC_END_DOS`, which selects `B0H`
+(U0/U1/U2/U3) and disables interrupts. VT-DOS itself enables interrupts, and
+the firmware handler then maps SYS or the disk ROM over page 3. That is how
+play reached the VT-DOS command line: `DIR` ran and returned to the game.
+Laser Squad does not enable interrupts, so the original frame interrupt is
+not part of play.
+
 This replaced an earlier four-file staged transport which had assumed VT-DOS
 could not write beneath its page-3 ROM window. The reusable
 [direct-U3 disk probe](../../knowledge/tvc-disk-u3-read-probe.asm) disproved
 that assumption for TVC 1.2 + VT-DOS.
 
-The initial blocks and scenario payloads share the assembly `LOAD_BLOCK`
-implementation resident in U0. A direct emulator call with mode 1 and ID
-`64H` reached the success return. The mapped memory at `B621H-FFFFH` was then
-compared byte-for-byte with original TAP block 6; all `49DFH` bytes matched.
+`LS1` and `LS2` still use `LOAD_BLOCK`. Both end at or below `B620H`, so they
+never reach `C000H`. Scenario and saved-game loads use `TVC_LOAD_GAME_PAYLOAD`.
+A direct emulator call with mode 1 and ID `64H` reached the success return
+under the previous single-transfer loader. The mapped memory at `B621H-FFFFH`
+was then compared byte-for-byte with original TAP block 6; all `49DFH` bytes
+matched. The split read was compared the same way at `B1E8H` after loading
+`L64`: raw U2 `B621H-BFFFH` and raw U3 `C000H-FFFFH` matched the payload.
 
 ### Disk save slot
 
 The original `B15CH` interface remains the boundary for menu save and load.
 `B15CH` now jumps to loader-resident `TVC_SAVELOAD`, which keeps the original
-mode in `A` and block ID in `B`. Mode 0 writes the live `49DFH` bytes at
-`B621H-FFFFH` to `SAVE.CAS` on the mounted DSK; mode 1 with ID `67H` reads that
-same file back. Other mode-1 IDs keep that block ID in `A` and enter
+mode in `A` and block ID in `B`. Mode 0 still writes the live `49DFH` bytes at
+`B621H-FFFFH` in one block output, so that save does cross `C000H`. Mode 1
+with ID `67H` reads that same file back through the split loader. Other mode-1 IDs keep that block ID in `A` and enter
 `TVC_MULTILOAD`, which selects the scenario file from it. The file has the
 normal 144-byte CAS outer container and 16-byte data-file application header.
 The menu's existing state update at `71D7H` still runs before the save call.
@@ -748,7 +763,7 @@ The converted memory layout on a 64K TVC is:
 | Range | Size | Use |
 | --- | ---: | --- |
 | `1BBC-21BBH` | `0600H` | Loader-resident slot-3 native font codes `20H-7FH` |
-| `21BC-2852H` | `0697H` | TVC runtime support and writable state |
+| `21BC-2879H` | `06BEH` | TVC runtime support and writable state |
 | `2880H-3EBFH` | `1640H` | First 89 native large glyphs |
 | `4000H-57FFH` | `1800H` | Remaining 96 native large glyphs |
 | `5800H-5AFFH` | `0300H` | Spectrum attribute state retained for game logic |
@@ -784,7 +799,7 @@ ink/paper bytes. Palette changes rebuild the table once; repeated screen clears
 with the same palette skip the work. The original `B139H` font tail remains a
 64-entry ink/paper colorization table for text and other dynamic drawing.
 
-The normal and double-height text renderers consume native font data directly,
+The double-height copier may run from the VID0 tail. It jumps back to U0 before `OUT (02H)` restores U2, so the return is fetched from resident support rather than from game RAM at the same address. The normal and double-height text renderers consume native font data directly,
 while the large renderer consumes scanline-ordered native tiles. The original
 firing code still calls its common pixel plotter; the
 patched body at `844CH` performs native set, clear, and XOR operations and
@@ -852,6 +867,13 @@ interrupt mapping, and the stack remains clear of the support image and its
 `3000H-302DH` scratch area. Replays of the pre-store snapshot with the active
 stack relocated there ran one million instructions and produced a coherent
 store screen without the self-corruption.
+
+Play now leaves interrupts disabled. A VT-DOS return enables them, and the
+firmware handler at `0038H` selects SYS (`70H`) or the disk ROM (`F0H`) in
+page 3 for the duration of the service. With that handler running, the
+VT-DOS command line accepted `DIR` and returned to the interrupted game.
+`TVC_END_DOS` disables interrupts and restores `B0H` before control returns
+to the scenario.
 
 ## Remaining Coverage and Fidelity Work
 

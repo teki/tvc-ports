@@ -52,10 +52,20 @@ returned `00H`, and raw U3 at `C000H` matched the source byte-for-byte. The
 result applies to the tested TVC 1.2 and VT-DOS configuration; recheck other
 ROM or disk-driver versions.
 
-The
+A transfer that reaches `C000H` is not a plain page-3 write. With the ceiling
+flag clear, VT-DOS copies the tail by selecting page 0 as U3 (`OUT (02H),F8H`
+in the disk ROM). That alias exists on 64K+ machines, which is the VT-DOS
+target. The
 [Laser Squad multi-load implementation](../ports/laser-squad/notes.md#runtime-multi-load-transport)
-uses this direct path to load each original payload across U2 and U3 from one
-CAS file.
+keeps each device read at or below `BFFFH` and copies the U3 half itself.
+
+A device call returns with interrupts enabled. The firmware IM 1 stub at
+`0038H` then selects SYS in page 3 (`OUT (02H),70H`), and expansion service
+can select the disk ROM there (`F0H`). Code or data in U3 is not visible
+until the handler restores the saved shadow. The disk command line is one of
+those ROM entries and returns to its caller after a command. A program whose
+play code lives in U3 should disable interrupts and select U3 again before
+the instruction after the device call.
 
 ## Interrupt Integration
 
