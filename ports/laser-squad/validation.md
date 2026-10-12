@@ -99,7 +99,7 @@ runtime loading.
   selection call must advance.
 - **Interrupt/drawing:** allow the shopping screen to draw with interrupts
   active. Coordinates must remain in range, the stack must stay below `4000H`,
-  and the installed support image at `21BCH-2852H` must not be modified by
+  and the installed support image at `21BCH-284DH` must not be modified by
   drawing.
 - **Gameplay input:** verify `Q`, `A`, `O`, `P`, and Space through the
   store/tactical control path, not only in menus. Control-selection options
@@ -112,10 +112,9 @@ runtime loading.
 - **Firing crosshair:** from `lsql-fire.rtvcsnap.zip`, move or blink the firing
   cursor. Its original 21-pixel XOR cross must appear in cyan at the target
   position, and toggling it must not recolor or damage the trajectory circles.
-- **Drawing performance:** a synthetic black-paper normal glyph takes 1,226
-  emulated Z80 cycles; the pristine Spectrum routine takes 655. Raw large-glyph
-  and temporary-descriptor callers now use the correctness fallback at U0
-  `3EC0H`; keep those off the main map path.
+- **Drawing performance:** run the draw-timing probe described below. Raw
+  large-glyph and temporary-descriptor callers use the correctness fallback at
+  U0 `3EC0H`; keep those off the main map path.
 - **Descriptor-native map draw:** the `612AH` 11-by-11 loop must perform one
   VID0 map and one restore, with mapper shadow `0003H` returning to `B0H`.
   From `lsql-fire.rtvcsnap.zip`, the old batched mask/recolor path takes 645,618
@@ -131,13 +130,14 @@ runtime loading.
   control-selection screens must render cleanly; frame timing, start address,
   and cursor IRQ settings remain unchanged.
 - **Support placement:** the loader support source and resident destination
-  both occupy `21BCH-2852H`. Its `LDIR` is in place, the 1,687-byte image must
+  both occupy `21BCH-284DH`. Its `LDIR` is in place, the 1,682-byte image must
   match the generated support TOML, and the `1BBCH-21BBH` native font must
   remain below it.
-- **Hidden native fonts:** before the first VT-DOS call, VID0 offsets
-  `3000H-35FFH` and `3600H-3BFFH` must match the offline slot-1/slot-2 font
-  variants, and `3C00H-3F2EH` must match the hidden drawing/conversion code.
-  Screen clears must leave the complete `3000H-3FFFH` tail unchanged.
+- **Hidden VID0 code:** `3C00H-3CE7H` must match the hidden conversion code
+  (`verify.py` compares the generated TOML with `LOADER.CAS`). Only
+  `TVC_LARGE_REBUILD_COUNT` and `TVC_CONVERT_PAIR` may change at run time.
+  Screen clears must leave the complete `3000H-3FFFH` tail unchanged,
+  including the converter's nibble table in the `3000H` page.
 - **Multi-load:** verify the direct payload at `B621H-FFFFH` matches the
   selected original TAP block. Verify the matching `Gxx.CAS` is then loaded as
   `1640H` bytes at `2880H` and `1800H` bytes at `4000H`, with both ranges equal
@@ -153,6 +153,42 @@ runtime loading.
   fresh scenario-menu snapshot, restored all `49DFH` bytes with `B15BH=00H`,
   then continued with joystick fire (Tab) to a correctly drawn tactical map;
   `B0C7H` remains the default joystick method after such a load.
+
+## Draw-timing Probe
+
+After changing a renderer, run `python3 build.py`, then from the port:
+
+```sh
+python3 experiments/draw-timing/draw_timing.py --compare build/draw-baseline
+python3 experiments/draw-timing/plot_sweep.py <reference-build-dir> --count 600
+```
+
+`draw_timing.py` installs the build into `lsql-fire.rtvcsnap.zip` and times
+13 routines (clear, both map loops, one tile, raw glyph, normal and inverse
+text, double-height text, three plot modes, firing view and exit) against the
+pristine `LSCODE`. `--save DIR` stores each routine's VID0, attribute, `5DA5H`,
+and `5D00H` output, and `--compare DIR` reports any byte difference. The
+ignored `build/draw-baseline` was saved from the build before the drawing
+speed pass. `plot_sweep.py` compares the `844CH` plotter with an older build
+directory over seeded random palettes, attributes, coordinates, modes, and
+old VRAM bytes.
+
+Record from the drawing speed pass (2026-10-12):
+
+- All 13 routines matched the baseline output byte for byte. Timings are in
+  [notes.md](notes.md#drawing-speed-pass).
+- The plotter sweep matched all 430 mode 0-2 cases. The 170 mode-3
+  differences are the intended return to the original set behavior.
+- A real-disk boot from `boot12dos.rtvcsnap.zip` (DSK in A and B,
+  `load "*"` injected) drew the title, scenario, controls, level, and
+  team/armour screens correctly. The armour screen covers double-height text,
+  inverse `70H` text, and raw-glyph soldier icons. Across the scenario 1
+  multi-load, only the `TVC_CONVERT_PAIR` memo byte changed in the hidden VID0
+  code.
+
+Manual checks still due after this pass: scroll the tactical map in all four
+directions, blink and move the map cursor, enter and leave the firing view
+and unit information, and confirm text screens and highlights.
 
 ## Beeper Audio Probe
 

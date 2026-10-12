@@ -19,3 +19,5 @@ and individual ports.
 
 - [Laser Squad beeper audio](laser-squad-beeper-audio.md): translate the
   three Spectrum beeper routines to the TVC sound DAC.
+- [Laser Squad drawing speed](laser-squad-draw-speed.md): bring the slow
+  drawing paths closer to Spectrum speed with identical output.

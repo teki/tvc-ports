@@ -24,7 +24,6 @@ from graphics import (
     LARGE_SOURCE_ADDR,
     LARGE_SOURCE_SIZE,
     SCENARIO_ADDR,
-    colorize_native,
     convert_bitmap_byte,
     convert_large_glyph,
     extract_main_font,
@@ -35,13 +34,13 @@ from rtvc import parse_rtvc_toml, run_tool
 
 
 EXPECTED_PATCHED_CAS = {
-    "LOADER.CAS": ("lasersqd_loader.cas", "d95fe7a9792ff851a67462459f715ba0b74d192b4fa6dfc38f735236d1ccdcae"),
+    "LOADER.CAS": ("lasersqd_loader.cas", "b8fd0305088d56709a3645b662af7605de6d1d7b16c754881b85f249aad64349"),
     "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "ed0fc35f04f9d8355e64cb774bfec5c67a1eacac4ad42de704c5c39ef0b83ddc"),
-    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "dee3de0273901a3f420d69d43e37b34e2c810ece8c70b6f6c14e86796b5f94b7"),
+    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "9c69e4196601f576a7910b4a2da092e67a4be9d6a09442d8984a4aa9d84e7a46"),
 }
 
 EXPECTED_PATCHED_SIZES = {
-    "LOADER.CAS": 7793,
+    "LOADER.CAS": 4047,
     "LS1.CAS": 2330,
     "LS2.CAS": 22665,
 }
@@ -246,12 +245,6 @@ def verify():
             raise ValueError("TVC_MULTILOAD does not start from the block ID in A")
         if symbols["TVC_NATIVE_FONT_END"] > laser_build.TVC_SUPPORT_ADDR:
             raise ValueError("native font overlaps resident support")
-        if not (
-            support_base
-            <= symbols["TVC_COPY_SAFE_AND"]
-            < symbols["TVC_SUPPORT_IMAGE_END"]
-        ):
-            raise ValueError("native color masks must remain in resident U0 support")
         save_header = symbols["TVC_SAVE_HEADER"] - loader.load_address
         if loader.payload[save_header:save_header + 16] != (
             b"\x00\x00\xdf\x49" + bytes(12)
@@ -264,15 +257,8 @@ def verify():
         actual_font = loader.payload[font_offset:font_offset + FONT_NATIVE_SIZE]
         if actual_font != expected_font:
             raise ValueError("LOADER.CAS does not contain the converted main font")
-        for slot in (1, 2):
-            start = symbols[f"TVC_NATIVE_FONT_SLOT{slot}_SOURCE"] - loader.load_address
-            actual_variant = loader.payload[start:start + FONT_NATIVE_SIZE]
-            if actual_variant != colorize_native(expected_font, slot):
-                raise ValueError(
-                    f"LOADER.CAS does not contain the slot-{slot} main-font variant"
-                )
 
-        hidden_start = symbols["TVC_NATIVE_FONT_SLOT1_SOURCE"]
+        hidden_start = symbols["TVC_HIDDEN_CODE_IMAGE"]
         hidden_end = symbols["TVC_HIDDEN_CODE_IMAGE_END"]
         hidden_offset = hidden_start - loader.load_address
         expected_hidden = loader.payload[
@@ -282,7 +268,7 @@ def verify():
             build_dir / "lasersqd_tvc_hidden_video.toml"
         )
         hidden_segment = hidden_document["segments"][0]
-        if hidden_segment["addr"] != symbols["TVC_NATIVE_FONT_SLOT1_RUN"]:
+        if hidden_segment["addr"] != symbols["TVC_HIDDEN_CODE_RUN"]:
             raise ValueError("hidden VID0 payload has an unexpected runtime address")
         if bytes(hidden_segment["bytes"]) != expected_hidden:
             raise ValueError("hidden VID0 payload does not match LOADER.CAS")

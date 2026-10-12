@@ -15,7 +15,6 @@ from graphics import (
     FONT_NATIVE_SIZE,
     LARGE_HIGH_SIZE,
     LARGE_LOW_SIZE,
-    colorize_native,
     extract_descriptor_large_graphics,
     extract_main_font,
     split_large_graphics,
@@ -48,7 +47,6 @@ SECOND_BLOCK_ADDR = 0x5E28
 FIRST_BLOCK_DISK_NAME = "LS1.CAS"
 SECOND_BLOCK_DISK_NAME = "LS2.CAS"
 TVC_SUPPORT_ADDR = 0x21BC
-TVC_HIDDEN_VIDEO_SIZE = 0x1000
 MULTILOAD_BLOCKS = {
     "L64": 6,
     "L65": 7,
@@ -162,11 +160,8 @@ def build_loader_cas(first_block_size, second_block_size, native_font):
     )
     document = parse_rtvc_toml(LOADER_BOOTSTRAP_TOML)
     symbols = document["symbols"]
-    hidden_start = symbols["TVC_NATIVE_FONT_SLOT1_SOURCE"]
     hidden_code_start = symbols["TVC_HIDDEN_CODE_IMAGE"]
     hidden_end = symbols["TVC_HIDDEN_CODE_IMAGE_END"]
-    if hidden_end - hidden_start > TVC_HIDDEN_VIDEO_SIZE:
-        raise ValueError("loader hidden VID0 payload exceeds the reserved 4 KiB")
     if hidden_end - hidden_code_start > 0x400:
         raise ValueError("loader hidden VID0 copy engine exceeds its 1 KiB reservation")
     font_start = symbols["TVC_NATIVE_FONT"]
@@ -186,19 +181,6 @@ def build_loader_cas(first_block_size, second_block_size, native_font):
     if any(payload[offset:end]):
         raise ValueError("loader native-font reservation is not empty")
     payload[offset:end] = native_font
-    for slot in (1, 2):
-        variant = colorize_native(native_font, slot)
-        variant_start = symbols[f"TVC_NATIVE_FONT_SLOT{slot}_SOURCE"]
-        variant_end = symbols[f"TVC_NATIVE_FONT_SLOT{slot}_SOURCE_END"]
-        if variant_end - variant_start != FONT_NATIVE_SIZE:
-            raise ValueError(f"loader slot-{slot} font reservation has the wrong size")
-        variant_offset = variant_start - cas.load_address
-        variant_payload_end = variant_offset + len(variant)
-        if variant_offset < 0 or variant_payload_end > len(payload):
-            raise ValueError(f"loader slot-{slot} font reservation lies outside its payload")
-        if any(payload[variant_offset:variant_payload_end]):
-            raise ValueError(f"loader slot-{slot} font reservation is not empty")
-        payload[variant_offset:variant_payload_end] = variant
     write_tvc_cas(
         LOADER_CAS,
         payload,
@@ -240,6 +222,7 @@ def loader_support_addresses():
         "TVC_DRAW_DOUBLE",
         "TVC_DRAW_LARGE",
         "TVC_DRAW_LARGE_GRID",
+        "TVC_DRAW_TILE",
         "TVC_PLOT_PIXEL",
     )
     addresses = {
@@ -291,14 +274,14 @@ def write_hidden_video_toml():
     document = parse_rtvc_toml(LOADER_BOOTSTRAP_TOML)
     symbols = document["symbols"]
     loader = read_tvc_cas(LOADER_CAS)
-    source_start = symbols["TVC_NATIVE_FONT_SLOT1_SOURCE"]
+    source_start = symbols["TVC_HIDDEN_CODE_IMAGE"]
     source_end = symbols["TVC_HIDDEN_CODE_IMAGE_END"]
     offset = source_start - loader.load_address
     payload = loader.payload[offset : offset + source_end - source_start]
     write_single_segment(
         TVC_HIDDEN_VIDEO_TOML,
-        "relocated hidden VID0 fonts and drawing code",
-        symbols["TVC_NATIVE_FONT_SLOT1_RUN"],
+        "relocated hidden VID0 drawing code",
+        symbols["TVC_HIDDEN_CODE_RUN"],
         payload,
     )
 

@@ -102,6 +102,10 @@ TVC_SPEAKER_ON  EQU 0BDH
         ORG 6150H
         CALL %TVC_DRAW_LARGE_LOOKUP_MAPPED%
 
+        ; Single descriptor draws and the other three scroll redraws.
+        ORG 616EH
+        JP %TVC_DRAW_TILE%
+
         ; Translate the common direct pixel plotter itself. This covers the
         ; firing cross plus every later set/clear/XOR and collision test.
         ORG 844CH

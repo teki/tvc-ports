@@ -770,30 +770,26 @@ The converted memory layout on a 64K TVC is:
 | Range | Size | Use |
 | --- | ---: | --- |
 | `1BBC-21BBH` | `0600H` | Loader-resident slot-3 native font codes `20H-7FH` |
-| `21BC-2879H` | `06BEH` | TVC runtime support and writable state |
+| `21BC-284DH` | `0692H` | TVC runtime support and writable state (limit `287FH`) |
 | `2880H-3EBFH` | `1640H` | First 89 native large glyphs |
 | `4000H-57FFH` | `1800H` | Remaining 96 native large glyphs |
 | `5800H-5AFFH` | `0300H` | Spectrum attribute state retained for game logic |
 | `5B00H-FFFFH` | — | Original game workspace/code and scenario payload |
 
-The undisplayed tail of VID0 holds two more offline-colored font variants and
-their drawing code: slot 1 at `3000H-35FFH`, slot 2 at `3600H-3BFFH`, and 815
-bytes of code at `3C00H-3F2EH`. The installed 3,887-byte payload fits inside
-the reserved 4 KiB. Installation happens before the first VT-DOS operation,
-and the build rejects overlap with the end of VID0.
-
-The native color AND/XOR masks remain in the U0 support image. Preparing a
-cell reads the original `B239H` table while page 2 is still U2, so patching
-hidden-VID0 immediates would write into game RAM and leave the copy loop
-uncolored. Mapped drawing helpers still run from the VID0 tail.
+The undisplayed tail of VID0 holds cold mapped-only code: 232 bytes at
+`3C00H-3CE7H` (CPU `BC00H`) for raw-glyph conversion and the palette rebuild,
+installed before the first VT-DOS operation. The page at `3000H` (CPU `B000H`)
+holds the converter's 31-entry nibble table, rebuilt on demand. Hot drawing
+code runs from U0 instead, because rtvc charges VID0 wait states on every
+opcode fetch. The `B239H` ink/paper pairs are U2 data, so the text renderers
+read them before mapping VID0.
 
 `SP=4000H` grows downward with `140H` (320 bytes) clear between the stack top
 and the low native table. The high table deliberately occupies the retired
 Spectrum bitmap-shadow range. No VID1 or VID2 storage is required: page 2 is
 mapped to VID0 only for the actual screen writes.
 
-The printable main font and its slot-1/slot-2 black-paper variants are embedded
-in `LOADER.CAS`. Each unchanged scenario payload has one generated
+The printable slot-3 main font is embedded in `LOADER.CAS`. Each unchanged scenario payload has one generated
 `G64`/`G65`/`G66`/`G68` companion containing 185 neutral native entries in the
 order of the scenario's `E79FH` descriptor table, not source-glyph order. This
 retains the same 11,840-byte allocation while allowing one source glyph to have
@@ -806,19 +802,16 @@ ink/paper bytes. Palette changes rebuild the table once; repeated screen clears
 with the same palette skip the work. The original `B139H` font tail remains a
 64-entry ink/paper colorization table for text and other dynamic drawing.
 
-The double-height copier may run from the VID0 tail. It jumps back to U0 before `OUT (02H)` restores U2, so the return is fetched from resident support rather than from game RAM at the same address. The normal and double-height text renderers consume native font data directly,
-while the large renderer consumes scanline-ordered native tiles. The original
-firing code still calls its common pixel plotter; the
-patched body at `844CH` performs native set, clear, and XOR operations and
-preserves the collision result at `5DA5H`. Attribute-only selection changes
-recolor the existing native cell rather than reconstructing a Spectrum bitmap.
-
-Representative emulated Z80 cycle counts for the non-map renderers remain:
-
-| Renderer | Spectrum original | Compatibility | Native |
-| --- | ---: | ---: | ---: |
-| Normal glyph, black paper | 655 | 2,414 | 1,226 |
-| Large raw-glyph compatibility call | 1,853 | 6,438 | converted on demand |
+Code running from the VID0 tail must jump back to U0 before `OUT (02H)`
+restores U2, so the return is fetched from resident support rather than from
+game RAM at the same address. The normal and double-height text renderers
+color the slot-3 native font directly, while the large renderer consumes
+scanline-ordered native tiles. The original firing code still calls its common
+pixel plotter; the patched body at `844CH` performs native set, clear, and XOR
+operations and preserves the collision result at `5DA5H`. Attribute-only
+selection changes recolor the existing native cell rather than reconstructing
+a Spectrum bitmap. Current cycle counts are in the drawing speed pass section
+below.
 
 The original `612AH` routine draws an entire 11-by-11 map. Its code is in U1
 and its map and descriptor data are in U3, so the port caches only the
@@ -828,8 +821,8 @@ leaves VID0 mapped across all 121 tiles. Temporary descriptor tables such as
 `E65FH`, plus direct `60AFH` glyph callers, convert one original glyph through
 the 64-byte scratch area at `3EC0H` to preserve their original semantics.
 
-A controlled `E79FH` draw from `lsql-fire.rtvcsnap.zip` now takes 269,472
-cycles, down from 380,671 for the four-quadrant descriptor-native path and
+A controlled `E79FH` draw from `lsql-fire.rtvcsnap.zip` took 269,472
+cycles before the drawing speed pass, down from 380,671 for the four-quadrant descriptor-native path and
 645,618 for the earlier batched mask/recolor path. Each 16-by-16 tile is stored
 as sixteen contiguous four-byte scanlines, and one unrolled writer copies its
 64 bytes while advancing by the 64-byte TVC raster stride. The change saves
@@ -837,20 +830,81 @@ as sixteen contiguous four-byte scanlines, and one unrolled writer copies its
 over mask/recolor. The complete map takes 4.31 TVC frames, or 86.2 ms.
 
 The runtime palette rebuild transposes the original four 8-by-8 Spectrum
-quadrants into that scanline layout and takes 1,295,276 cycles in the same
-injected test; it is skipped when a clear reapplies an unchanged palette. A
+quadrants into that scanline layout and took 1,295,276 cycles in the same
+injected test (1.16M T in the draw-timing probe after the speed pass); it is skipped when a clear reapplies an unchanged palette. A
 model comparison of all 11,840 resident bytes against the live descriptor
 attributes, source glyphs, collision fallback, and profile-3 color map matched
 exactly. The raw-glyph fallback also matched all 64 expected screen bytes and
 restored mapper shadow `0003H` to `B0H`.
 
-Common black-paper font draws select an offline-colored font and bypass runtime
-mask preparation. Inverse and non-black-paper text retains the generic
-mask/XOR path. Large map tiles no longer recolor per byte: their descriptor
+Text colors each font byte inline as `(mask AND delta) XOR paper`, so black,
+inverse, and non-black paper cost the same. Large map tiles no longer recolor
+per byte: their descriptor
 attribute is resolved at scenario/palette transition time. This requires no
 second 11,840-byte table and uses no VID1/VID2 memory on the 64K target. The
 separately loaded, one-time title screen still uses its transitional
 compatibility shadow.
+
+### Drawing speed pass
+
+The [draw-timing experiment](experiments/draw-timing/) times each drawing
+routine from `lsql-fire.rtvcsnap.zip`, once with the pristine `LSCODE` and once
+with the current build, and dumps VID0, the attributes, `5DA5H`, and
+`5D00H-5D01H` for byte comparison. The Spectrum column is the original code
+on the TVC CPU without contention, converted at 3.5 MHz; the TVC column
+includes video waits at 3.125 MHz. Every row below produced output
+byte-identical to the build before this pass.
+
+| Path | Spectrum | TVC before | TVC now |
+| --- | ---: | ---: | ---: |
+| `602CH` clear | 41.5 ms | 112.6 ms | 33.9 ms |
+| `612AH` 121-tile map | 71.9 ms | 105.9 ms | 88.6 ms |
+| `6181H` map (also `646CH`, `64B0H`) | 72.4 ms | 454.9 ms | 96.5 ms |
+| `616EH` one tile | 1,963 T | 11,618 T | 2,362 T |
+| `60AFH` raw glyph | 1,850 T | 11,504 T | 9,474 T |
+| `6072H` text, black / inverse paper | 652 T | 1,395 / 2,593 T | 1,395 T |
+| `64F7H` double-height text | 945 T | 5,851 T | 2,150 T |
+| `844CH` plot set / clear / XOR | 298 / 272 / 279 T | ~1,630 T | 556 / 504 / 530 T |
+| `8495H` firing view | 960 ms | 3,606 ms | 1,372 ms |
+| `85C3H` firing exit | 141 ms | 281 ms | 177 ms |
+| Palette rebuild, 185 tiles | — | 1.75M T | 1.16M T |
+
+The changes:
+
+- The firing clear shares the unit-information temporary-screen guard, so
+  entering and leaving the firing view no longer rebuild the tile cache.
+- `616EH` (single tiles, the `6181H`/`646CH`/`64B0H` scroll redraws, and the
+  cursor restore) enters the same descriptor lookup as `612AH`, so `E79FH`
+  tiles come from the precolored cache.
+- The lookup, attribute writes, and a 21-byte looped scanline copier run from
+  U0. The copier ends on the `LDI` count, which is faster than the former
+  unrolled copier because that one paid VID0 fetch waits.
+- `602CH` fills VID0 with `PUSH` while interrupts are disabled, and the
+  `B239H` table is rebuilt only when the palette id changes.
+- The plotter is a single U0 routine using the cell's `B239H` delta/paper pair
+  and an `88H >> (X AND 3)` plane mask, with no per-pixel palette lookups.
+- Text renderers share `TVC_TEXT_CELL` (attribute store, `B239H` pair, VID0
+  address, mapping) and color each byte inline. `6072H` now returns
+  `A=(5D00H)` and `B=0` and preserves C, HL, and DE as the original does;
+  `64F7H` preserves all registers. The offline slot-1/slot-2 font variants and
+  their direct copier were removed, which shrank `LOADER.CAS` from 7,793 to
+  4,047 bytes.
+- Raw-glyph conversion uses the `B000H` nibble table. The table is rebuilt
+  only when the ink/paper pair changes, and each Spectrum byte becomes two
+  table reads.
+
+The plotter now follows the original for every mode value: 1 clears, 2
+inverts, and any other value sets and stores the collision mask. The previous
+native plotter treated mode 3 as invert, but the game writes only modes 0-2 to
+`5DA6H`. A seeded 600-case differential sweep against the previous build
+(palettes 1, 2, 3, 5, and 6; 20 attributes; random coordinates and old bytes)
+matched the VRAM byte, `5DA5H`, and mapper shadow in all 430 mode 0-2 cases.
+
+A memo of the last converted raw glyph was rejected because the writers of the
+`E8DFH` glyph data have not been audited, so a glyph/attribute/palette key
+could serve stale pixels. The remaining firing-view gap is the per-pixel cost
+of the original plot loop: about 3,600 plots at roughly 260 T extra each,
+including the VID0 map and restore around every pixel.
 
 ### TVC interrupt stack isolation
 
