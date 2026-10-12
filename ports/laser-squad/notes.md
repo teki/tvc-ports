@@ -332,6 +332,13 @@ rebuilds the native large-glyph cache from the restored `E79FH` descriptors
 and `E8DFH` source glyphs before setting the original `B15BH` success flag.
 The original verify mode 2 is still pending.
 
+The control method at `B0C7H` lies in `LSCODE`, outside the saved payload.
+A saved game loaded straight after boot therefore keeps the default `00H`
+(Sinclair), which the port maps to the TVC joystick: "PRESS FIRE TO CONTINUE"
+waits for joystick fire (Tab in `rtvc`), and Space does nothing until option
+1 selects the keyboard. The original Spectrum game behaves the same, waiting
+for Sinclair fire (`0`).
+
 A TVC 1.2 VT-DOS GUI run from `lsq-menu.rtvcsnap.zip` created `SAVE.CAS` and
 the saved payload matched the pre-save `B621H-FFFFH` memory byte-for-byte.
 The generated DSK is writable at runtime; running `build.py` creates a fresh

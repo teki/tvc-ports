@@ -33,7 +33,12 @@ masks now live in resident U0. Support occupies `21BCH-2852H`.
 - A clean BASIC `load "*"` boot reached the scenario menu with colored text
   and loaded scenario 1 through to the controls screen.
 
+- A user `SAVE.CAS` (second scenario, turn 3) loaded from both a clean BASIC
+  boot and `lsq-mainmenu.rtvcsnap.zip`: payload matched, `B15BH=00H`, and the
+  tactical map drew correctly. The control method `B0C7H` is not saved, so a
+  fresh-boot load waits for joystick fire until option 1 selects keyboard.
+
 ## Next steps
 
-Repeat a clean BASIC boot through scenario 1, then the visible save/load
-scenario. Older snapshots taken before the `21BCH` support move remain invalid.
+Port verify mode 2. Older snapshots taken before the `21BCH` support move
+remain invalid.

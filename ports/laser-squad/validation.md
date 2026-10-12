@@ -149,7 +149,10 @@ runtime loading.
   payload must be restored, `B15BH` must be `00H`, and the native large-glyph
   cache must match the restored `E79FH`/`E8DFH` source. Removing the save file
   must leave `B15BH` nonzero on load. Rebuilding the generated DSK starts with
-  no save slot.
+  no save slot. A user save from the second scenario (turn 3), loaded from a
+  fresh scenario-menu snapshot, restored all `49DFH` bytes with `B15BH=00H`,
+  then continued with joystick fire (Tab) to a correctly drawn tactical map;
+  `B0C7H` remains the default joystick method after such a load.
 
 ## Beeper Audio Probe
 
