@@ -151,6 +151,38 @@ runtime loading.
   must leave `B15BH` nonzero on load. Rebuilding the generated DSK starts with
   no save slot.
 
+## Beeper Audio Probe
+
+`verify.py` checks the translated speaker bytes and that the only remaining
+`OUT (FEH)` instructions in `LS2.CAS` are the unreachable ones at `5E37H` and
+`B1A5H`.
+
+A differential probe used `lsql-fire.rtvcsnap.zip` in a headless emulator.
+It ran each routine with the original and then the patched `LSCODE` bytes,
+behind a `DI` harness, using breakpoints on every speaker `OUT`:
+
+- effect player `B5BEH`, all 13 effects: identical write count, level sequence
+  (`00H/10H` mapped to `81H/BDH`), write-to-write T-state intervals, and final
+  `B5B3H-B5BDH` state;
+- chirp `8F2CH`, six consecutive calls from `5D7BH=01H`: identical write
+  roles and `5D7BH-5D7DH` state, with interval changes of exactly +3, +36/38,
+  and +18 T;
+- `TVC_RANDOM_BEEP`: only `81H`/`BDH`, each matching the `R` bit it read.
+
+Leave interrupts disabled in such harnesses: this snapshot resumes with them
+enabled, and firmware interrupts add thousands of T-states between writes.
+Screenshots taken while breakpoints stop the emulator at every speaker write
+can show a partial frame of diagonal stripes; that is not a rendering fault.
+
+In a real-disk boot from `boot12dos.rtvcsnap.zip`, the first stage left the
+port `05H` mirror `0B12H` at `0FH`. It was unchanged after `LS2` and after
+loading scenario 1, which continued to the controls menu.
+
+Manual listening check: menu and selection sounds, unit movement, a fired
+projectile (falling chirp), and an explosion. A user-confirmed `rtvc` run
+reported working audio. In the firing snapshot, the
+keyboard method plays effect 11 while idle and effect 5 on entering aim mode.
+
 ## Unsplit Multi-load Validation
 
 The direct one-file path was validated in `rtvc` from the clean TVC 1.2

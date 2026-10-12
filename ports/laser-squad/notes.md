@@ -10,7 +10,7 @@ recreates the same DSK as the last working `rtvc/data/porting` build.
 The port preserves the original game and data and replaces narrow
 hardware-facing boundaries: initial and runtime loading, Spectrum screen and
 attribute rendering, palette selection, keyboard scanning, border output,
-interrupt integration, and unsafe Spectrum stack assumptions.
+beeper sound, interrupt integration, and unsafe Spectrum stack assumptions.
 
 The decisive failures found during the working-port investigation were:
 
@@ -875,6 +875,40 @@ VT-DOS command line accepted `DIR` and returned to the interrupted game.
 `TVC_END_DOS` disables interrupts and restores `B0H` before control returns
 to the scenario.
 
+## Beeper Audio
+
+Laser Squad has no ROM `BEEPER` calls and no speaker writes outside `LSCODE`.
+A byte scan of every loaded TAP block for `OUT (FEH),A` and `OUT (C),r` found
+three sound routines. `79D1H` is data, `5E37H` is in the replaced original
+entry, and `B1A5H` is in the retired tape loader.
+
+| Routine | Original speaker writes | Translation |
+| --- | --- | --- |
+| `B5BEH` effect player; `B5D5H` replays live state | `B5F8H` toggles bit 4 of state byte `B5BDH` | `B5BDH` now holds the TVC port `06H` level: seeded `81H`, toggled with `XOR 3CH`, written to `06H`. Same bytes and T-states. |
+| `8F2CH` projectile chirp (per trajectory step from `89B1H`/`8A20H`) | `8F49H` on, `8F53H` off, `8F60H` `R AND 10H` | On `BDH` and off `81H` to port `06H`; the random write calls `TVC_RANDOM_BEEP`. `5D7BH`/`5D7CH` logic unchanged. |
+| `9475H` explosion particles | `94E4H` `R AND 10H` | `94E0H` (the `L9517H` jump target) calls `TVC_RANDOM_BEEP`. |
+
+The 13 ten-byte effect records at `B531H` are outer count, inner count, then
+four `(delta, period)` pairs. The disassembly's `B581H` "routine" is the tail
+of that table. `TVC_RANDOM_BEEP` occupies the 13 zero bytes at `B614H-B620H`.
+No code references them: the expansion scenarios' only `C3 1B B6` lies in the
+`E8DFH` glyph data.
+
+With port `05H` bit 4 clear, port `06H` bits 2-5 are a direct DAC. Port `06H`
+also carries the video mode and bit 7, so the speaker levels reproduce the
+firmware mirror at `0B13H` (`81H` in play): `81H` is amplitude 0 and `BDH` is
+amplitude 15. BASIC leaves the port `05H` mirror at `0B12H` as `1FH`, with
+bit 4 routing the stopped oscillator into the amplitude, which would silence
+DAC writes. The first-stage TVC entry therefore clears bit 4 once and updates
+the mirror. A real-disk boot showed `0FH` after the `LS2` load and after the
+scenario 1 multi-load.
+
+Timing is a plain translation, as approved. The effect player keeps its
+original T-states. The chirp's half-cycles grow by 3 T (high), 36-38 T (low),
+and 18 T (after the random write). All routines run at the TVC's 3.125 MHz, so
+sounds are about 10.7% lower (roughly two semitones) and 12% longer than on a
+3.5 MHz Spectrum.
+
 ## Remaining Coverage and Fidelity Work
 
 These are not known blockers for the confirmed playable path. They record
@@ -894,8 +928,9 @@ branches or fidelity work that have not been exhaustively validated:
   numeric and gameplay input paths.
 - Continue translating later direct Spectrum bitmap and attribute writes into
   the established TVC GRAPHICS 4 layout.
-- Handle Spectrum ULA `OUT (FEH),A` side effects deliberately instead of
-  allowing accidental TVC port writes.
+- Add an automated in-game firing scenario for the projectile chirp and
+  explosion noise; audio is verified by the routine-level probe and
+  interactive play.
 - Continue auditing less-used interrupt-sensitive branches even though the
   firmware stack is now isolated from the Spectrum workspace.
 

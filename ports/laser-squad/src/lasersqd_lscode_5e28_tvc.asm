@@ -4,6 +4,11 @@
 ; applies only these patches. Do not place appended code at B621H: the original
 ; multiload system loads its first overlay there and calls that address.
 
+; Spectrum speaker bit 4 becomes TVC port 06H amplitude 0 or 15. Both values
+; keep the firmware mirror's GRAPHICS 4 mode and bit 7 (0B13H = 81H in play).
+TVC_SPEAKER_OFF EQU 81H
+TVC_SPEAKER_ON  EQU 0BDH
+
         ORG 5E28H
         JP %TVC_MAIN_ENTRY%    ; map the game's U3 and reproduce original entry
 
@@ -107,3 +112,51 @@
         ; too; otherwise the next TVC firmware interrupt overwrites 5Dxx state.
         ORG 0B1E8H
         LD SP,4000H
+
+        ; Effect player: B5BDH now holds the TVC speaker level instead of the
+        ; Spectrum port FEH value. Same bytes and T-states per toggle.
+        ORG 0B5F3H
+        XOR TVC_SPEAKER_ON-TVC_SPEAKER_OFF ; 3CH: amplitude bits only
+
+        ORG 0B5F8H
+        OUT (06H),A
+
+        ORG 0B5BDH
+        DB TVC_SPEAKER_OFF
+
+        ; Projectile chirp: retain its period and accumulator logic; translate
+        ; the on, off, and random speaker writes.
+        ORG 8F47H
+        LD A,TVC_SPEAKER_ON
+        OUT (06H),A
+
+        ORG 8F52H
+        LD A,TVC_SPEAKER_OFF
+        OUT (06H),A
+        LD A,(5D7BH)
+        LD B,A
+TVC_CHIRP_LOW:
+        NOP
+        DJNZ TVC_CHIRP_LOW
+        CALL TVC_RANDOM_BEEP
+        NOP
+        NOP
+
+        ; Explosion particle noise. L9517H jumps to 94E0H, so keep that entry.
+        ORG 94E0H
+        CALL TVC_RANDOM_BEEP
+        NOP
+        NOP
+        NOP
+
+        ; The unreferenced gap before the B621H multiload overlay.
+        ORG 0B614H
+TVC_RANDOM_BEEP:
+        LD A,R
+        AND 10H
+        LD A,TVC_SPEAKER_OFF
+        JR Z,TVC_RANDOM_BEEP_OUT
+        LD A,TVC_SPEAKER_ON
+TVC_RANDOM_BEEP_OUT:
+        OUT (06H),A
+        RET

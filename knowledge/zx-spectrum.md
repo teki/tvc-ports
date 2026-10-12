@@ -87,6 +87,24 @@ The detailed
 records the observed depth, misleading paging symptoms, later `SP` reset, and
 validated relocation.
 
+## Beeper Sound
+
+Spectrum sound is bit 4 of `OUT (FEH)`, timed by the CPU. Find every writer by
+scanning all loaded blocks for `D3 FE` and `OUT (C),r`, plus calls to ROM
+`BEEPER` (`03B5H`). Then separate speaker writes from border-only writes and
+dead loader code. Keep the original delay loops, effect tables, and state
+bytes; translate only the speaker write (see
+[TVC beeper output](tvc.md#beeper-output-through-the-sound-dac)). The
+`R AND 10H` noise idiom needs the same level mapping as on/off writes.
+
+The unchanged loops run at the target clock. On a 3.125 MHz TVC, sounds are
+about 10.7% lower and 12% longer than on a 3.5 MHz Spectrum. Cycle
+compensation is a separate, deliberate decision.
+
+Laser Squad's
+[beeper translation](../ports/laser-squad/notes.md#beeper-audio) is the
+originating example.
+
 ## Tape and Multi-load Games
 
 Preserve the original stage-selection and data-selection logic while replacing

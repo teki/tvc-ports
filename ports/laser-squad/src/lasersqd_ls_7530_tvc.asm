@@ -29,6 +29,10 @@ TVC_LS_ENTRY:
         LD (0003H),A
         OUT (02H),A
         CALL TVC_CLEAR_SCREEN
+        LD A,(0B12H)
+        AND 0EFH               ; stop the oscillator gating port 06H amplitude
+        LD (0B12H),A
+        OUT (05H),A            ; so later speaker writes drive the DAC directly
         XOR A
         OUT (00H),A            ; black border
         LD A,01H

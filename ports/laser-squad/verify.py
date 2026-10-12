@@ -35,16 +35,30 @@ from rtvc import parse_rtvc_toml, run_tool
 
 
 EXPECTED_PATCHED_CAS = {
-    "LOADER.CAS": ("lasersqd_loader.cas", "76b242060dd80d4919c986107330c1e9faf701d3057c6ac34e13a2ef37d16e44"),
-    "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "3b8efc05885080fd82704b01b2cc7b3604530871c6637f4ad4fb80235dcddf8f"),
-    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "3afae8073ab6ef291a2a1ed868968dce79138ca5f17ea11abbe35322d30a9541"),
+    "LOADER.CAS": ("lasersqd_loader.cas", "d95fe7a9792ff851a67462459f715ba0b74d192b4fa6dfc38f735236d1ccdcae"),
+    "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "ed0fc35f04f9d8355e64cb774bfec5c67a1eacac4ad42de704c5c39ef0b83ddc"),
+    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "dee3de0273901a3f420d69d43e37b34e2c810ece8c70b6f6c14e86796b5f94b7"),
 }
 
 EXPECTED_PATCHED_SIZES = {
     "LOADER.CAS": 7793,
-    "LS1.CAS": 2320,
+    "LS1.CAS": 2330,
     "LS2.CAS": 22665,
 }
+
+# Translated speaker writes in LS2: TVC port 06H with amplitude 0 (81H) or 15
+# (BDH). The only OUT (FEH) left are in the replaced entry and tape loader.
+EXPECTED_SOUND_PATCHES = {
+    0x8F47: bytes.fromhex("3ebdd306"),
+    0x8F52: bytes.fromhex("3e81d306"),
+    0x8F5D: bytes.fromhex("cd14b6"),
+    0x94E0: bytes.fromhex("cd14b6"),
+    0xB5BD: bytes.fromhex("81"),
+    0xB5F3: bytes.fromhex("ee3c"),
+    0xB5F8: bytes.fromhex("d306"),
+    0xB614: bytes.fromhex("ed5fe6103e8128023ebdd306c9"),
+}
+UNREACHABLE_SPECTRUM_SPEAKER_WRITES = [0x5E37, 0xB1A5]
 
 EXPECTED_PALETTES = bytes((
     0x00, 0x51, 0x54, 0x44,
@@ -210,6 +224,20 @@ def verify():
             raise ValueError("LS2.CAS cursor control is not hooked to the TVC joystick")
         if lscode_call(0xB136) != expected_jump("TVC_GAME_KEYS"):
             raise ValueError("LS2.CAS keyboard control is not hooked")
+        for addr, expected in EXPECTED_SOUND_PATCHES.items():
+            offset = addr - 0x5E28
+            if bytes(lscode_cas.payload[offset:offset + len(expected)]) != expected:
+                raise ValueError(f"LS2.CAS speaker translation differs at {addr:04X}H")
+        payload = lscode_cas.payload
+        speaker_writes = [
+            0x5E28 + i for i in range(len(payload) - 1)
+            if payload[i] == 0xD3 and payload[i + 1] == 0xFE
+        ]
+        if speaker_writes != UNREACHABLE_SPECTRUM_SPEAKER_WRITES:
+            raise ValueError(
+                "LS2.CAS has untranslated OUT (FEH) at "
+                + ", ".join(f"{a:04X}H" for a in speaker_writes)
+            )
         save_entry = symbols["TVC_SAVELOAD"]
         if lscode_call(0xB15C) != bytes((0xC3, save_entry & 0xFF, save_entry >> 8)):
             raise ValueError("LS2.CAS save/load entry is not hooked")

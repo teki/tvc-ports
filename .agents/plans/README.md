@@ -17,4 +17,5 @@ and individual ports.
 
 ## Current Plans
 
-There are currently no active implementation plans.
+- [Laser Squad beeper audio](laser-squad-beeper-audio.md): translate the
+  three Spectrum beeper routines to the TVC sound DAC.

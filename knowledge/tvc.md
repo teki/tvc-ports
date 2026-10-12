@@ -87,6 +87,24 @@ The originating
 also shows why all later source-side `SP` assignments must be audited after
 choosing a safe target stack.
 
+## Beeper Output Through the Sound DAC
+
+A one-bit speaker maps to the four-bit amplitude in port `06H` bits 2-5 when
+port `05H` bit 4 is clear (direct DAC). The same port `06H` byte carries the
+video mode and bit 7. Derive both speaker levels from the firmware mirror at
+`0B13H` rather than writing a bare amplitude.
+
+The TVC 1.2 BASIC mirror of port `05H` at `0B12H` was `1FH` in play: bit 4
+set, oscillator stopped. In that state the stopped square wave gates the
+amplitude, so DAC writes may be silent. Clear bit 4 and update `0B12H` once
+before the first speaker write. In Laser Squad the cleared value survived
+later VT-DOS loads. The firmware's `TONE_SET` writes both mirrors, so code
+that calls the OS sound services must restore direct-DAC mode afterwards.
+
+Verified in the
+[Laser Squad beeper translation](../ports/laser-squad/notes.md#beeper-audio),
+including a differential timing probe against the original routines.
+
 ## BASIC Retained Screen Characters and Command Injection
 
 The TVC has only graphics video RAM: displayed characters are rasterized into
