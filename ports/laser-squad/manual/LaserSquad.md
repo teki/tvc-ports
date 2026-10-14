@@ -4,10 +4,6 @@
 
 *Blade Software Limited, Brooklands, New Road, St. Ives, Huntingdon, Cambridgeshire PE17 4RG.*
 
-> **Provenance:** text OCR'd with Indra (clean prose), structure and images from marker-pdf, and the weapons table (Reference Guide, page 16 of the manual) retyped by hand from the page scan. Obvious OCR typos were corrected. The page scan is kept at `images/weapons-table-page16.png` for checking the numbers.
-
----
-
 ## Introduction
 
 Laser Squad is a one or two player tactical wargame system that accurately simulates many aspects of individual level combat. It will take some time for a new player to become familiar with all aspects of the system, and we recommend that you load the program and go through the first section of this manual which provides you with a basic guide to playing the game. The second section should be treated as a reference manual for the experienced players. Some features of the system are not implemented with the five scenarios provided with the main program, but the future scenarios will explore the versatility of game play that Laser Squad can provide. The final section in this booklet provides instructions for the five scenarios provided with the main program.
@@ -312,8 +308,6 @@ Ranged combat damage is determined by the sum of the following values:
 4. Subtract the protection rating of the terrain occupied by the target unit.
 
 ## Weapons table
-
-Retyped from the table on page 16 of the manual (printed rotated). "%" columns are percentages; "-" means not applicable. See `images/weapons-table-page16.png` for the original.
 
 | Weapon | Weight | Size | Constitution | AP cost in map | % CC cost | % CC accuracy | CC damage | % CC strength bonus | % CC agility bonus | % Auto AP cost | % Auto accuracy | % Snap AP cost | % Snap accuracy | % Aimed AP cost | % Aimed accuracy | % Skill factor | Ranged damage factor | Ammo capacity | Ammo type |
 | :-- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | :-- |

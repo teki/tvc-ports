@@ -43,6 +43,3 @@ ports/**/*.CDT
 ports/**/sources/*.zip
 
 # Original media downloaded by preparation remains local.
-
-# Laser Squad manual page scan
-!ports/laser-squad/manual/images/*.png

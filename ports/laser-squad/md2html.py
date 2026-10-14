@@ -5,8 +5,9 @@ Handles the Markdown subset the manual uses (headings, paragraphs, lists,
 tables, blockquotes, rules, images, emphasis, code). Images are embedded as
 data: URIs so the output is one file. Standard library only.
 
-Usage: md2html.py [input.md] [output.html]
-Default output: dist/LaserSquad.html
+Usage: md2html.py [input.md [output.html]]
+With no arguments every manual/LaserSquad*.md is converted to dist/<name>.html
+(LaserSquad.md -> English, LaserSquad.hu.md -> Hungarian).
 """
 
 import base64
@@ -62,7 +63,7 @@ def split_row(line):
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
-def convert(md, base):
+def convert(md, base, lang="en"):
     lines = md.splitlines()
     out = []
     i = 0
@@ -125,18 +126,28 @@ def convert(md, base):
                 i += 1
             out.append("<p>%s</p>" % inline(" ".join(buf), base))
     body = "\n".join(out)
-    return ('<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+    return ('<!doctype html>\n<html lang="%s"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             "<title>%s</title><style>%s</style></head><body>\n%s\n</body></html>\n"
-            % (html.escape(title), CSS, body))
+            % (lang, html.escape(title), CSS, body))
+
+
+def convert_file(src, dst):
+    m = re.search(r"\.([a-z]{2})\.md$", src.name)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(convert(src.read_text(encoding="utf-8"), src.parent, m.group(1) if m else "en"),
+                   encoding="utf-8")
+    print("wrote %s (%d bytes)" % (dst, dst.stat().st_size))
 
 
 def main(argv):
-    src = pathlib.Path(argv[1]) if len(argv) > 1 else PORT_ROOT / "manual" / "LaserSquad.md"
-    dst = pathlib.Path(argv[2]) if len(argv) > 2 else PORT_ROOT / "dist" / "LaserSquad.html"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(convert(src.read_text(encoding="utf-8"), src.parent), encoding="utf-8")
-    print("wrote %s (%d bytes)" % (dst, dst.stat().st_size))
+    if len(argv) > 1:
+        src = pathlib.Path(argv[1])
+        dst = pathlib.Path(argv[2]) if len(argv) > 2 else PORT_ROOT / "dist" / (src.name[:-3] + ".html")
+        convert_file(src, dst)
+        return
+    for src in sorted((PORT_ROOT / "manual").glob("LaserSquad*.md")):
+        convert_file(src, PORT_ROOT / "dist" / (src.name[:-3] + ".html"))
 
 
 if __name__ == "__main__":
