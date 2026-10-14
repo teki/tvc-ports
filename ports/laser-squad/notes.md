@@ -218,8 +218,11 @@ At the first input dispatch, `B0C7H` is zero, selecting control method 1 at
 Protek/AGF/cursor, and keyboard. The first three Spectrum joystick readers
 all produce the same active-low action byte (fire, up, down, right, left in
 bits 0-4). Their entries at `B0E8H`, `B0FDH`, and `B117H` now jump to one TVC
-joystick scan of keyboard row 8 (Tab/Fire, Up, Down, Right, Left). Numeric
-menus do not use this path.
+joystick scan of keyboard row 8 (Fire, Up, Down, Right, Left). The built-in
+keyboard joystick has no fire contact (only an external stick provides row 8
+C3), so the scan also treats Space (row 7, C5) as fire, as in the keyboard
+control method. Row 9 (the other external port) is not read. Numeric menus do
+not use this path.
 
 The scenario-selection path calls Spectrum ROM `KEY-SCAN` (`028EH`) at
 `6A74H` while waiting for key release and again at `A290H` while accepting the
@@ -335,8 +338,8 @@ The original verify mode 2 is still pending.
 The control method at `B0C7H` lies in `LSCODE`, outside the saved payload.
 A saved game loaded straight after boot therefore keeps the default `00H`
 (Sinclair), which the port maps to the TVC joystick: "PRESS FIRE TO CONTINUE"
-waits for joystick fire (Tab in `rtvc`), and Space does nothing until option
-1 selects the keyboard. The original Spectrum game behaves the same, waiting
+waits for joystick fire (Space, or the external-stick fire contact), and the
+keyboard control method is selected with option 1. The original Spectrum game behaves the same, waiting
 for Sinclair fire (`0`).
 
 A TVC 1.2 VT-DOS GUI run from `lsq-menu.rtvcsnap.zip` created `SAVE.CAS` and

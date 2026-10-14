@@ -296,15 +296,26 @@ TVC_MAIN_ENTRY:
 
 ; Sinclair, Kempston, and Protek/AGF/cursor all return the same active-low
 ; action byte: bit 0 fire, bit 1 up, bit 2 down, bit 3 right, bit 4 left.
-; Map those three control methods to the TVC joystick on keyboard row 8.
+; Map those three control methods to the TVC joystick on keyboard row 8. The
+; built-in keyboard joystick has no fire contact, so Space (row 7, C5) is also
+; fire, as it is for the keyboard control method.
 TVC_JOYSTICK:
         LD E,0FFH
+        LD A,(0B11H)
+        AND F0H
+        OR 07H
+        OUT (03H),A
+        IN A,(58H)             ; row 7: Space
+        BIT 5,A
+        JR NZ,TVC_JOYSTICK_ROW8
+        RES 0,E
+TVC_JOYSTICK_ROW8:
         LD A,(0B11H)
         AND F0H
         OR 08H
         OUT (03H),A
         IN A,(58H)             ; row 8: fire/up/down/right/left
-        BIT 3,A                 ; Tab/Fire
+        BIT 3,A                 ; external joystick fire
         JR NZ,TVC_JOYSTICK_UP
         RES 0,E
 TVC_JOYSTICK_UP:

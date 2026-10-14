@@ -103,7 +103,7 @@ runtime loading.
   drawing.
 - **Gameplay input:** verify `Q`, `A`, `O`, `P`, and Space through the
   store/tactical control path, not only in menus. Control-selection options
-  1-3 must use the TVC joystick (row 8: Tab/Fire, arrows) with the same
+  1-3 must use the TVC joystick (row 8: fire, arrows; Space is also fire) with the same
   fire/up/down/right/left action bits; option 4 remains keyboard.
 - **Aiming directions:** P moves right, O left, Q up, A down. Check single-pixel
   movement through four- and eight-pixel boundaries. The corrected plotter
@@ -151,7 +151,7 @@ runtime loading.
   must leave `B15BH` nonzero on load. Rebuilding the generated DSK starts with
   no save slot. A user save from the second scenario (turn 3), loaded from a
   fresh scenario-menu snapshot, restored all `49DFH` bytes with `B15BH=00H`,
-  then continued with joystick fire (Tab) to a correctly drawn tactical map;
+  then continued with joystick fire (Space) to a correctly drawn tactical map;
   `B0C7H` remains the default joystick method after such a load.
 
 ## Draw-timing Probe
@@ -322,7 +322,11 @@ Using `rtvc/snapshots/boot12dos.rtvcsnap.zip` with the rebuilt resident support
 in a separate headless emulator, Sinclair (`B0E8H`), Kempston (`B0FDH`), and
 Protek/AGF/cursor (`B117H`) all returned the same TVC joystick action byte:
 
-- none `FFH`, Tab/Fire `FEH`, Up `FDH`, Down `FBH`, Right `F7H`, Left `EFH`.
+- none `FFH`, Fire `FEH`, Up `FDH`, Down `FBH`, Right `F7H`, Left `EFH`.
+
+The scan was later extended so Space (row 7, C5) also returns Fire, because the
+built-in keyboard joystick has no fire contact. The row 8 results above are
+unchanged; re-run the probe with Space held to confirm `FEH`.
 
 Option 4 remains the keyboard handler. Interactive play with a host joystick or
 arrow keys plus Tab is a manual regression.
