@@ -48,7 +48,6 @@ def main():
 
     commit = git("rev-parse", "HEAD")
     short = git("rev-parse", "--short=10", "HEAD")
-    subject = git("log", "-1", "--format=%s")
     commit_time = int(git("log", "-1", "--format=%ct"))
     commit_date = time.strftime("%Y-%m-%d", time.gmtime(commit_time))
     name = "laser-squad-%s" % short
@@ -70,11 +69,10 @@ def main():
             "Laser Squad - TVC disk conversion\n"
             "Commit:  %s\n"
             "Date:    %s\n"
-            "Subject: %s\n"
             "\n"
             "Requires a Videoton TV Computer with a floppy disk drive.\n"
             "Insert the disk and type: LOAD \"*\"\n"
-        ) % (commit, commit_date, subject)
+        ) % (commit, commit_date)
 
         arguments.out_dir.mkdir(parents=True, exist_ok=True)
         target = arguments.out_dir / (name + ".zip")
