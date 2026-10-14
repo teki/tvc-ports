@@ -2,19 +2,19 @@
 """Convert manual/LaserSquad.md to a single self-contained HTML file.
 
 Handles the Markdown subset the manual uses (headings, paragraphs, lists,
-tables, blockquotes, rules, images, emphasis, code). Images are embedded as
-data: URIs so the output is one file. Standard library only.
+tables, blockquotes, rules, images, emphasis, code). Images stay separate
+files: the images/ folder is copied next to the HTML and referenced
+relatively, which keeps the HTML small. Standard library only.
 
 Usage: md2html.py [input.md [output.html]]
 With no arguments every manual/LaserSquad*.md is converted to dist/<name>.html
 (LaserSquad.md -> English, LaserSquad.hu.md -> Hungarian).
 """
 
-import base64
 import html
-import mimetypes
 import pathlib
 import re
+import shutil
 import sys
 
 PORT_ROOT = pathlib.Path(__file__).resolve().parent
@@ -43,20 +43,12 @@ def inline(text, base):
             continue
         t = html.escape(part, quote=False)
         t = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)",
-                   lambda m: '<img alt="%s" src="%s">' % (m.group(1), image_uri(m.group(2), base)), t)
+                   r'<img alt="\1" src="\2">', t)
         t = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', t)
         t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
         t = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"<em>\1</em>", t)
         out.append(t)
     return "".join(out)
-
-
-def image_uri(src, base):
-    path = base / html.unescape(src)
-    if not path.is_file():
-        return src
-    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return "data:%s;base64,%s" % (mime, base64.b64encode(path.read_bytes()).decode())
 
 
 def split_row(line):
@@ -137,6 +129,9 @@ def convert_file(src, dst):
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(convert(src.read_text(encoding="utf-8"), src.parent, m.group(1) if m else "en"),
                    encoding="utf-8")
+    images = src.parent / "images"
+    if images.is_dir():
+        shutil.copytree(images, dst.parent / "images", dirs_exist_ok=True)
     print("wrote %s (%d bytes)" % (dst, dst.stat().st_size))
 
 

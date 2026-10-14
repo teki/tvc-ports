@@ -5,7 +5,8 @@ Refuses to run unless the whole repository is committed (no modified,
 staged or untracked-but-not-ignored files), so the hash in the zip name
 identifies exactly the sources the contents were built from.
 
-The zip holds the DSK image, the HTML manuals and a BUILD.txt recording the
+The zip holds the DSK image, the HTML manuals (with their images/ folder)
+and a BUILD.txt recording the
 commit. It is written to dist/release/laser-squad-<hash>.zip.
 """
 
@@ -78,6 +79,8 @@ def main():
         target = arguments.out_dir / (name + ".zip")
         stamp = time.gmtime(commit_time)[:6]
         members = [(dsk, DSK_NAME)] + [(m, m.name) for m in manuals]
+        members += [(img, "images/" + img.name)
+                    for img in sorted((tmp / "images").glob("*"))]
         with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
             for source, arcname in members:
                 entry = zipfile.ZipInfo("%s/%s" % (name, arcname), stamp)
