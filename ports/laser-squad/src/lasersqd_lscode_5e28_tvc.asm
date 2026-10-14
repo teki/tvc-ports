@@ -32,6 +32,28 @@ TVC_SPEAKER_ON  EQU 0BDH
         ORG 0B136H
         JP %TVC_GAME_KEYS%     ; Q/A/O/P/Space gameplay controls
 
+        ; The CONTROLS ? menu offers only Joystick and Keyboard. Two options
+        ; are accepted (B0B5H loads the count into 5DF6H), and method 1 is
+        ; routed to the keyboard handler at B136H.
+        ORG 0B0BBH
+        DB 02H                 ; two selectable options
+
+        ORG 0B0E2H
+        DB 36H,0B1H            ; method 1 -> keyboard handler
+
+        ; Message 69H (0ABB6H, tokens from 0ABC1H): "1: JOYSTICK" / "2: KEYBOARD". The original
+        ; stream was 9CH 9DH / 9EH 9DH / 9FH / 0A0H; keep its length and pad
+        ; with spaces.
+        ORG 0ABC1H
+        DB 9CH,2FH,9EH,20H,20H,20H,20H,20H,20H
+
+        ; Token 9CH (message 10AH) and token 9EH (message 10CH), same length.
+        ORG 0AFA3H
+        DB 31H,3AH,20H,4AH,4FH,59H,53H,54H,49H,43H,4BH       ; "1: JOYSTICK"
+
+        ORG 0AFB8H
+        DB 32H,3AH,20H,4BH,45H,59H,42H,4FH,41H,52H,44H       ; "2: KEYBOARD"
+
         ORG 6A74H
         CALL %TVC_KEY_SCAN%    ; replace release-loop Spectrum ROM KEY-SCAN
 

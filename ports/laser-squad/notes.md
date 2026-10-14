@@ -214,8 +214,12 @@ An end-to-end TVC debugger trace reached these original routines in order:
 5. `B0C8H` — input-device dispatch.
 
 At the first input dispatch, `B0C7H` is zero, selecting control method 1 at
-`B0E8H`. The original four `CONTROLS ?` choices remain: Sinclair, Kempston,
-Protek/AGF/cursor, and keyboard. The first three Spectrum joystick readers
+`B0E8H`. The `CONTROLS ?` menu offers only Joystick and Keyboard. The port
+patches the option count at `B0BBH` to 2, rewrites message `69H` (`ABC0H`) and
+the texts of tokens `9CH`/`9EH` (`AFA3H`, `AFB8H`) in place to "1: JOYSTICK" and
+"2: KEYBOARD", and points dispatch-table entry 1 (`B0E2H`) at the keyboard
+handler `B136H`; methods 0 and 1 are therefore the only values the menu stores.
+The first three Spectrum joystick readers
 all produce the same active-low action byte (fire, up, down, right, left in
 bits 0-4). Their entries at `B0E8H`, `B0FDH`, and `B117H` now jump to one TVC
 joystick scan of keyboard row 8 (Fire, Up, Down, Right, Left). The built-in
@@ -339,8 +343,8 @@ The control method at `B0C7H` lies in `LSCODE`, outside the saved payload.
 A saved game loaded straight after boot therefore keeps the default `00H`
 (Sinclair), which the port maps to the TVC joystick: "PRESS FIRE TO CONTINUE"
 waits for joystick fire (Space, or the external-stick fire contact), and the
-keyboard control method is selected with option 1. The original Spectrum game behaves the same, waiting
-for Sinclair fire (`0`).
+keyboard control method is selected with option 2. The original Spectrum game
+behaves the same, waiting for Sinclair fire (`0`).
 
 A TVC 1.2 VT-DOS GUI run from `lsq-menu.rtvcsnap.zip` created `SAVE.CAS` and
 the saved payload matched the pre-save `B621H-FFFFH` memory byte-for-byte.
