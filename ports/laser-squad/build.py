@@ -353,7 +353,7 @@ def build(build_dir, out_dir):
 
     if DISK.exists():
         DISK.unlink()
-    run("rtvc-dsk", ["new720", str(DISK)])
+    run("rtvc-dsk", ["new", str(DISK)])
     run(
         "rtvc-dsk",
         ["put", f"{DISK}:LOADER.CAS", str(LOADER_CAS)],
