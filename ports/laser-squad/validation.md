@@ -130,24 +130,44 @@ runtime loading.
   control-selection screens must render cleanly; frame timing, start address,
   and cursor IRQ settings remain unchanged.
 - **Support placement:** the loader support source and resident destination
-  both occupy `21BCH-284DH`. Its `LDIR` is in place, the 1,682-byte image must
-  match the generated support TOML, and the `1BBCH-21BBH` native font must
+  both occupy `21BCH-281BH`. Its `LDIR` is in place, the 1,632-byte image must
+  match the generated support TOML, and the `1BB3H-21B2H` native font must
   remain below it.
-- **Hidden VID0 code:** `3C00H-3CE7H` must match the hidden conversion code
+- **Hidden VID0 code:** `3C00H-3CA2H` must match the hidden conversion code
   (`verify.py` compares the generated TOML with `LOADER.CAS`). Only
-  `TVC_LARGE_REBUILD_COUNT` and `TVC_CONVERT_PAIR` may change at run time.
+  `TVC_CONVERT_PAIR` may change at run time.
   Screen clears must leave the complete `3000H-3FFFH` tail unchanged,
   including the converter's nibble table in the `3000H` page.
 - **Multi-load:** verify the direct payload at `B621H-FFFFH` matches the
   selected original TAP block. Verify the matching `Gxx.CAS` is then loaded as
-  `1640H` bytes at `2880H` and `1800H` bytes at `4000H`, with both ranges equal
-  to the offline conversion of that scenario's `E8DFH-FFFEH` table.
+  `1640H` bytes at `2880H` and `1800H` bytes at `4000H`, and that its
+  `5481H-5483H` pens replace `TVC_PALETTES` pens 1-3. `verify.py` checks
+  `G64`/`G65` tile by tile against the CPC tape and `G66`/`G68` against an
+  independent fixed-palette Spectrum conversion.
+- **CPC graphics:** scenario 1 deployment and tactical screens must show the
+  CPC tiles in black/bright red/bright magenta/white, with the Assassins'
+  deployment squares red and the droids' squares magenta, and red CPC soldier
+  sprites after deployment. Scenario 2 must use bright blue/dim cyan/white and
+  match the CPC 464 layout tile for tile. Scenario 3 must use dim yellow/bright red/
+  bright yellow and the `68H` expansion bright red/dim yellow/bright yellow,
+  with CPC tiles from Side B.
+- **Firing collisions:** after `python3 build.py`, run
+  `python3 experiments/draw-timing/plot_attribute_check.py`; it must print
+  `PASS`. In play, shots must stop at walls that share a cell with a unit
+  blob, and moving the aiming cross across a wall must leave the wall intact.
+- **Deployment scroll:** from the deployment screen with the cursor at the
+  right edge, one scroll must finish within about 0.15 s of emulated time
+  (it took about 1.5 s through the raw `E65FH` path before the CPC tables).
 - **Save/load:** from the game option menu, press `2`. The mounted writable DSK
   must contain one `SAVE.CAS` with a 16-byte data-file header and `49DFH`
   payload identical to the pre-save `B621H-FFFFH` memory. Saving again must
-  update that slot. Press `3`, then choose scenario `4` (saved game): the
-  payload must be restored, `B15BH` must be `00H`, and the native large-glyph
-  cache must match the restored `E79FH`/`E8DFH` source. Removing the save file
+  update that slot; header byte 14 must hold the scenario ID (`64H`-`68H`).
+  Press `3`, then choose scenario `4` (saved game): the payload must be
+  restored, `B15BH` must be `00H`, and `2880H`/`4000H` must again equal that
+  scenario's `Gxx.CAS`. On 2026-10-16 this was checked by overwriting both
+  ranges and the palette before loading a scenario 1 save; both were restored
+  exactly and the tactical map drew correctly. A save written before this
+  change has no ID and keeps the resident tiles. Removing the save file
   must leave `B15BH` nonzero on load. Rebuilding the generated DSK starts with
   no save slot. A user save from the second scenario (turn 3), loaded from a
   fresh scenario-menu snapshot, restored all `49DFH` bytes with `B15BH=00H`,

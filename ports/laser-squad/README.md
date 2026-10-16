@@ -21,6 +21,9 @@ The first preparation downloads the exact Laser Squad TAP archive from World
 of Spectrum and verifies both the ZIP and selected TAP member. Later builds use
 the ignored local cache.
 
+The map graphics and palettes come from the Amstrad CPC release, which
+preparation also downloads (from CPCRulez) and verifies.
+
 The final image is written to:
 
 ```text

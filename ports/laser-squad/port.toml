@@ -15,6 +15,24 @@ path = "sources/LASERSQD.TAP"
 sha256 = "7776b18fddf23faac3b7bd95eacf3fdfeec92f8245978fd4fde1028cfeca9791"
 generated_toml_sha256 = "b0ea11384c918fcee9cf9130b78e3692066640dafbafd5d749f688a34785fe16"
 
+# Amstrad CPC release used only for its map tiles and palettes. Side A holds
+# scenarios 1-2 (blocks 64H, 65H); Side B holds 66H, 68H, and 69H.
+[source_cdt]
+url = "https://cpcrulez.fr/f/p9d"
+page = "https://cpcrulez.fr/GamesTest/laser_squad.htm"
+archive_path = "sources/Laser_Squad__ENGLISH.zip"
+archive_sha256 = "ec860a5f14a235d1e16953a53d710a3febb0ab7c8bfdc4b86a468196b5f15794"
+
+[[source_cdt.members]]
+name = "Laser_Squad__ENGLISH__Side_A.cdt"
+path = "sources/Laser_Squad__ENGLISH__Side_A.cdt"
+sha256 = "fd6126e8700f487cd22a7e0911067a91926eec79ed7eb974697a3ec776dce84c"
+
+[[source_cdt.members]]
+name = "Laser_Squad__ENGLISH__Side_B.cdt"
+path = "sources/Laser_Squad__ENGLISH__Side_B.cdt"
+sha256 = "ae4f939efaed76ed4393e8f22abeebf08d83fe98506152cc7cc4aba7028b3320"
+
 [commands]
 prepare = "python3 prepare.py"
 build = "python3 build.py"

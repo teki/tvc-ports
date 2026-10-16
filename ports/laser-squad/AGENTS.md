@@ -13,6 +13,9 @@ Read the repository [port-game skill](../../.agents/skills/port-game/SKILL.md),
   cache when absent.
 - Keep original game logic and data intact; isolate TVC hardware translations
   in the tracked assembly overlays and loader support.
+- Approved exception: map tiles, sprites, icons, and palettes come from the
+  Amstrad CPC release (see the CPC section in `notes.md`). Both CPC tape
+  sides are required sources, downloaded and verified by `prepare.py`.
 - Preserve the disk file names and multi-load stage-selection behavior.
 - Do not commit `build/`, `dist/`, or diagnostic snapshots.
 

@@ -15,17 +15,16 @@ from graphics import (
     FONT_NATIVE_SIZE,
     LARGE_HIGH_SIZE,
     LARGE_LOW_SIZE,
-    extract_descriptor_large_graphics,
     extract_main_font,
-    split_large_graphics,
 )
+from cpc_graphics import build_native_graphics, read_cpc_scenario
 from rtvc import (
     parse_rtvc_toml,
     read_single_segment,
     run_tool,
     write_single_segment,
 )
-from prepare import prepare as prepare_sources
+from prepare import prepare as prepare_sources, source_cdt
 
 
 SRC_DIR = PORT_ROOT / "src"
@@ -53,11 +52,12 @@ MULTILOAD_BLOCKS = {
     "L66": 8,
     "L68": 9,
 }
+# Gxx name: (Spectrum TAP block, scenario block flag shared with the CPC tape)
 NATIVE_GRAPHICS_BLOCKS = {
-    "G64": 6,
-    "G65": 7,
-    "G66": 8,
-    "G68": 9,
+    "G64": (6, 0x64),
+    "G65": (7, 0x65),
+    "G66": (8, 0x66),
+    "G68": (9, 0x68),
 }
 
 
@@ -339,9 +339,12 @@ def build(build_dir, out_dir):
         write_tvc_cas(cas_path, payload)
         multiload_cas[disk_name] = cas_path
     native_graphics_cas = {}
-    for block_name, block_index in NATIVE_GRAPHICS_BLOCKS.items():
+    cpc_tapes = source_cdt()
+    for block_name, (block_index, flag) in NATIVE_GRAPHICS_BLOCKS.items():
         scenario = read_tap_block_data(SOURCES_DIR / "LASERSQD.TAP", block_index)
-        low, high = split_large_graphics(extract_descriptor_large_graphics(scenario))
+        cpc = read_cpc_scenario(cpc_tapes, flag)
+        print(f"{block_name}: {'CPC' if cpc else 'Spectrum fallback'} tiles")
+        low, high = build_native_graphics(scenario, cpc)
         if len(low) != LARGE_LOW_SIZE or len(high) != LARGE_HIGH_SIZE:
             raise ValueError(f"unexpected {block_name} native graphics split")
         disk_name = f"{block_name}.CAS"

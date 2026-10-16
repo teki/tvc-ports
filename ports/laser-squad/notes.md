@@ -776,10 +776,10 @@ The converted memory layout on a 64K TVC is:
 
 | Range | Size | Use |
 | --- | ---: | --- |
-| `1BBC-21BBH` | `0600H` | Loader-resident slot-3 native font codes `20H-7FH` |
-| `21BC-284DH` | `0692H` | TVC runtime support and writable state (limit `287FH`) |
-| `2880H-3EBFH` | `1640H` | First 89 native large glyphs |
-| `4000H-57FFH` | `1800H` | Remaining 96 native large glyphs |
+| `1BB3-21B2H` | `0600H` | Loader-resident slot-3 native font codes `20H-7FH` |
+| `21BC-281BH` | `0660H` | TVC runtime support and writable state (limit `287FH`) |
+| `2880H-3EBFH` | `1640H` | Tiles 0-88 (CPC-derived since 2026-10-16) |
+| `4000H-57FFH` | `1800H` | Tiles 89-170, palette, and three lookup pages |
 | `5800H-5AFFH` | `0300H` | Spectrum attribute state retained for game logic |
 | `5B00H-FFFFH` | — | Original game workspace/code and scenario payload |
 
@@ -912,6 +912,87 @@ A memo of the last converted raw glyph was rejected because the writers of the
 could serve stale pixels. The remaining firing-view gap is the per-pixel cost
 of the original plot loop: about 3,600 plots at roughly 260 T extra each,
 including the VID0 map and restore around every pixel.
+
+### CPC map graphics and palette (2026-10-16)
+
+With explicit approval, the map tiles, unit sprites, object icons, and colors
+now come from the Amstrad CPC release (both sides of the CPCRulez
+`Laser_Squad__ENGLISH.zip`, identified in [port.toml](port.toml)). The Spectrum program, map data, descriptor tables,
+11-by-11 window, and text font are unchanged. This supersedes the phase
+palette profiles and the runtime descriptor recoloring described above for
+the map tiles; the earlier text remains as history.
+
+CPC findings used by the build, all read from the tape rather than a
+snapshot:
+
+- Scenario blocks are turbo blocks with a flag, the data, and an XOR
+  checksum. The loader fills memory downward, so the data is stored reversed;
+  every scenario loads at `6369H`. Side A has `64H` and `65H`; Side B has
+  `66H`, `68H`, and `69H`.
+- The game runs in mode 1. Its byte layout is the TVC GRAPHICS 4 layout
+  (pixel n = bit 7-n plus bit 3-n as the high bit), so CPC tile bytes are used
+  unchanged.
+- `953FH` holds 171 tiles of sixteen 4-byte scanlines, ending at `BFFEH`.
+  Tile 0 is never drawn as a tile (its bytes overlap the next table).
+- `949FH` holds one CPC tile number per `E79FH` descriptor (185 bytes) and
+  `93FFH` one per `E65FH` descriptor (160 bytes). Most numbers equal the
+  Spectrum glyph numbers, but some differ by attribute (red and magenta team
+  `D` squares are separate CPC tiles) and scenario 2 renumbers many tiles.
+- `644EH` holds the Gate Array colors of pens 1-3; pen 0 is black. Scenario 1:
+  pink, pastel magenta, bright white. Scenario 2: pastel blue, cyan, bright
+  white. Scenario 3: orange, bright red, bright yellow. `68H`: orange, yellow
+  (half level), bright yellow. `69H`: pastel magenta, pastel blue, bright
+  white.
+- The CPC draws straight to the visible `C000H` screen (no double buffer). A
+  deployment scroll finishes in under 0.1 s.
+
+Each `Gxx.CAS` keeps its 11,840-byte, two-range size. `2880H` holds tiles
+0-88, and `4000H` holds tiles 89-170 followed by the scenario palette at
+`5480H` and three page-aligned lookups: `5500H` (`E79FH` descriptor to tile),
+`5600H` (`E65FH` descriptor to tile), and `5700H` (Spectrum glyph to tile).
+[cpc_graphics.py](cpc_graphics.py) builds them. The glyph map prefers the tile
+that the CPC columns pair with each glyph and otherwise the closest lit-pixel
+shape within 16 pixels; a value of `FFH` falls back to the raw Spectrum
+converter. An `E65FH` entry whose static tile equals its glyph's mapped tile is
+stored as `FEH`, so the live glyph decides. This follows `6D10H`, which
+rewrites unit glyphs at `E660H+2n` as soldiers turn. Scenario 2's two `E79FH`
+entries that name tile 171 (inside CPC screen memory) also use `FEH`.
+
+`TVC_DRAW_LARGE_LOOKUP_MAPPED` now selects the `5500H` or `5600H` column for
+the two scenario tables and the glyph page for any other table, then copies
+the pre-coloured tile. `60AFH` callers go through the same glyph page. The
+runtime table rebuild, its hidden VID0 routine, and the per-profile palettes
+are gone. `TVC_APPLY_PALETTE` writes one palette whose pens 1-3 are replaced
+after each `Gxx` load. CPC colors map to TVC colors through
+`CPC_TO_TVC_COLOR`: pink becomes bright red and pastel magenta bright magenta
+(the user's choice), pastel blue becomes bright blue, and cyan becomes dim
+cyan. Other colors take, per scenario, the set of distinct unused TVC colors
+with the smallest plain RGB distance, giving scenario 3 dim yellow, bright
+red, and bright yellow and `68H` bright red, dim yellow, and bright yellow. Spectrum inks map to slots as the CPC colors the same screens: blue,
+green, and cyan to pen 2, red and magenta to pen 1, yellow and white to pen 3.
+This also turns the `70H` selection bar white, as on the CPC.
+
+All four Gxx files now come from the CPC tapes. The fixed-palette Spectrum
+fallback in `cpc_graphics.py` remains for any scenario block missing from them.
+
+`SAVE.CAS` header byte 14 now records the scenario ID. Loading a save reloads
+that scenario's `Gxx` file and palette; an older save without an ID keeps the
+resident tiles.
+
+Draw-timing probe after the change (same snapshot and method as the speed pass
+above):
+
+| Path | Before | Now |
+| --- | ---: | ---: |
+| `6181H` map through `E65FH` (deployment) | raw per tile, about 1.2 s in play | 100.6 ms |
+| `612AH` 121-tile map | 88.6 ms | 90.1 ms |
+| `616EH` one tile | 2,362 T | 2,399 T |
+| `60AFH` raw glyph | 9,474 T | 2,207 T |
+| Scenario table setup | 1.16M T rebuild | 40k T copy |
+| `8495H` firing view | 1,372 ms | 1,372 ms |
+
+The remaining slow path is the firing view's per-pixel plotting, not tile
+drawing.
 
 ### TVC interrupt stack isolation
 
@@ -1054,6 +1135,21 @@ with an occupied old trail pixel: erasing the old pixel retained the correct
 new collision. The original `8B7AH` output matched its 21 coordinate pairs
 on a mixed background; a second call restored all 12,288 visible video bytes
 and left the collision byte untouched.
+
+**Superseded 2026-10-16:** the plotter now treats any non-paper pixel as a
+set Spectrum bit, and XOR mode toggles the pixel by `ink XOR paper` instead of
+choosing between ink and paper. In play, bullets passed through walls and the
+aiming cross erased wall pixels. A wall pixel keeps the color it was drawn in,
+but its 8-by-8 cell can later take another attribute (an object blob or
+marker in the same cell). The old "shows the cell's ink" test then missed the
+wall, and the old XOR turned it into ink and then into paper. The new rule
+matches the Spectrum, where a set bit stays set whatever the attribute: a
+second XOR restores any color. Set mode still writes the cell's ink and clear
+mode writes paper. [plot_attribute_check.py](experiments/draw-timing/plot_attribute_check.py)
+checks 32 pixel and attribute combinations: collision after an attribute
+change, exact restoration after two XORs, and no collision on cleared pixels.
+Fire mode staying open after a hit is original behavior: it ends only with
+END FIRE.
 
 The live `E65FH` descriptor attributes in this snapshot were
 `04,05,06,07,41,42,43,44,45,46,47,4D,56`. All retain distinguishable ink and

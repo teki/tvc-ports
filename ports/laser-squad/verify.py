@@ -27,20 +27,20 @@ from graphics import (
     convert_bitmap_byte,
     convert_large_glyph,
     extract_main_font,
-    split_large_graphics,
 )
+import cpc_graphics
 from media import read_tap_block_data, read_tvc_cas, sha256_file
 from rtvc import parse_rtvc_toml, run_tool
 
 
 EXPECTED_PATCHED_CAS = {
-    "LOADER.CAS": ("lasersqd_loader.cas", "5aaec48d898b699fcfe5d75162687ead4e4494dcfc14e1866166431a5effa2aa"),
+    "LOADER.CAS": ("lasersqd_loader.cas", "3f4e274397ca6bf3547cd721569349d88229f5303a90555dbb2bdbb9ace5a03e"),
     "LS1.CAS": ("lasersqd_ls_7530_tvc.cas", "ed0fc35f04f9d8355e64cb774bfec5c67a1eacac4ad42de704c5c39ef0b83ddc"),
-    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "9d83057ce5f572b34d0e659264dd67ff3c91184963da5a12c6b86e4dafd599d1"),
+    "LS2.CAS": ("lasersqd_lscode_5e28_tvc.cas", "3c1949d703ddf75b008d00e7a3e1377df828fd2c0836f0bc8dd15c7722a3b360"),
 }
 
 EXPECTED_PATCHED_SIZES = {
-    "LOADER.CAS": 4064,
+    "LOADER.CAS": 3921,
     "LS1.CAS": 2330,
     "LS2.CAS": 22665,
 }
@@ -59,25 +59,19 @@ EXPECTED_SOUND_PATCHES = {
 }
 UNREACHABLE_SPECTRUM_SPEAKER_WRITES = [0x5E37, 0xB1A5]
 
-EXPECTED_PALETTES = bytes((
-    0x00, 0x51, 0x54, 0x44,
-    0x00, 0x50, 0x54, 0x44,
-    0x00, 0x50, 0x51, 0x54,
-    0x00, 0x15, 0x51, 0x54,
-    0x00, 0x51, 0x54, 0x45,
-    0x00, 0x54, 0x50, 0x51,
-    0x00, 0x15, 0x54, 0x51,
-))
-
-EXPECTED_INK_PALETTE_MAPS = bytes((
-    0, 1, 3, 3, 1, 1, 2, 2,
-    0, 1, 3, 3, 1, 1, 2, 2,
-    0, 2, 3, 2, 1, 2, 3, 2,
-    0, 2, 3, 3, 1, 2, 3, 1,
-    0, 1, 3, 3, 1, 1, 2, 2,
-    0, 2, 1, 1, 2, 3, 1, 1,
-    0, 3, 1, 1, 1, 3, 2, 1,
-))
+# One palette for every screen, initially scenario 1's CPC pens: black, bright
+# red, bright magenta, and bright white. Spectrum inks map as the CPC colours
+# them. Each Gxx file carries its scenario's own palette at 5480H.
+EXPECTED_PALETTES = bytes((0x00, 0x44, 0x45, 0x55))
+# Expected TVC palettes and the CPC Gate Array pens they come from, per scenario.
+EXPECTED_SCENARIO_PALETTES = {
+    "G64": (bytes((0x47, 0x4F, 0x4B)), bytes((0x00, 0x44, 0x45, 0x55))),  # pink, pastel magenta, white
+    "G65": (bytes((0x5F, 0x46, 0x4B)), bytes((0x00, 0x41, 0x11, 0x55))),  # pastel blue, cyan, white
+    "G66": (bytes((0x4E, 0x4C, 0x4A)), bytes((0x00, 0x14, 0x44, 0x54))),  # orange, bright red, bright yellow
+    "G68": (bytes((0x4E, 0x5E, 0x4A)), bytes((0x00, 0x44, 0x14, 0x54))),  # orange, yellow, bright yellow
+}
+EXPECTED_INK_PALETTE_MAPS = bytes((0, 2, 1, 1, 2, 2, 3, 3) * 7)
+REFERENCE_SLOT_BYTES = (0x00, 0xF0, 0x0F, 0xFF)
 
 
 def reference_bitmap_byte(value):
@@ -89,28 +83,95 @@ def reference_bitmap_byte(value):
     return bytes(output)
 
 
-def reference_descriptor_graphics(scenario):
-    """Build the expected table independently in scenario-descriptor order."""
-    descriptor_start = LARGE_DESCRIPTOR_ADDR - SCENARIO_ADDR
-    source_start = LARGE_SOURCE_ADDR - SCENARIO_ADDR
-    descriptors = scenario[
-        descriptor_start:descriptor_start + LARGE_DESCRIPTOR_SIZE
-    ]
-    source = scenario[source_start:source_start + LARGE_SOURCE_SIZE]
-    if len(descriptors) != LARGE_DESCRIPTOR_SIZE or len(source) != LARGE_SOURCE_SIZE:
-        raise ValueError("scenario is missing large-graphics data")
+def reference_spectrum_tile(scenario, attribute, glyph):
+    """Convert one Spectrum glyph to fixed-palette native bytes independently."""
+    source_start = LARGE_SOURCE_ADDR - SCENARIO_ADDR + glyph * 32
+    source = scenario[source_start:source_start + 32]
+    ink = EXPECTED_INK_PALETTE_MAPS[attribute & 7]
+    paper = EXPECTED_INK_PALETTE_MAPS[(attribute >> 3) & 7]
+    if paper and ink == paper:
+        ink = 0
     output = bytearray()
-    for descriptor in range(LARGE_GLYPH_COUNT):
-        glyph = descriptors[descriptor * 2 + 1]
-        if glyph >= LARGE_GLYPH_COUNT:
-            raise ValueError(f"descriptor {descriptor:02X}H has invalid glyph")
-        start = glyph * 32
-        glyph_source = source[start:start + 32]
-        for left, right in ((0, 8), (16, 24)):
-            for row in range(8):
-                output.extend(reference_bitmap_byte(glyph_source[left + row]))
-                output.extend(reference_bitmap_byte(glyph_source[right + row]))
+    for left, right in ((0, 8), (16, 24)):
+        for row in range(8):
+            for value in (source[left + row], source[right + row]):
+                for mask in reference_bitmap_byte(value):
+                    output.append(
+                        (REFERENCE_SLOT_BYTES[ink] & mask)
+                        | (REFERENCE_SLOT_BYTES[paper] & ~mask & 0xFF)
+                    )
     return bytes(output)
+
+
+def check_native_graphics(block_name, scenario, cpc, payload):
+    """Check a Gxx file against the CPC tape or the Spectrum source."""
+    low = payload[:LARGE_LOW_SIZE]
+    high = payload[LARGE_LOW_SIZE:]
+
+    def tile(number):
+        if number < 89:
+            return low[number * 64:number * 64 + 64]
+        return high[(number - 89) * 64:(number - 89) * 64 + 64]
+
+    palette = high[0x1480:0x1484]
+    map_column = high[0x1500:0x1500 + LARGE_GLYPH_COUNT]
+    temp_column = high[0x1600:0x1600 + 160]
+    glyph_map = high[0x1700:0x1800]
+    descriptors = scenario[
+        LARGE_DESCRIPTOR_ADDR - SCENARIO_ADDR:
+        LARGE_DESCRIPTOR_ADDR - SCENARIO_ADDR + LARGE_DESCRIPTOR_SIZE
+    ]
+    temp = scenario[0xE65F - SCENARIO_ADDR:0xE65F - SCENARIO_ADDR + 320]
+    if any(value != 0xFF and value >= 171 for value in glyph_map):
+        raise ValueError(f"{block_name}.CAS glyph map references a missing tile")
+    if tile(0) != bytes(64):
+        raise ValueError(f"{block_name}.CAS tile 0 is not blank")
+
+    if cpc is None:
+        for descriptor in range(LARGE_GLYPH_COUNT):
+            attribute, glyph = descriptors[descriptor * 2:descriptor * 2 + 2]
+            expected = reference_spectrum_tile(scenario, attribute, glyph)
+            if tile(map_column[descriptor]) != expected:
+                raise ValueError(
+                    f"{block_name}.CAS descriptor {descriptor:02X}H differs"
+                )
+        if temp_column != bytes([0xFE] * 160) or glyph_map != bytes([0] + [0xFF] * 255):
+            raise ValueError(f"{block_name}.CAS fallback lookups are not raw")
+        if palette != EXPECTED_PALETTES:
+            raise ValueError(f"{block_name}.CAS fallback palette differs")
+        return "Spectrum"
+
+    def cpc_bytes(address, size):
+        return cpc[address - 0x6369:address - 0x6369 + size]
+
+    expected_pens, expected_palette = EXPECTED_SCENARIO_PALETTES[block_name]
+    if cpc_bytes(0x644E, 3) != expected_pens:
+        raise ValueError(f"{block_name} CPC pens differ from the recorded tape")
+    if palette != expected_palette:
+        raise ValueError(f"{block_name}.CAS palette differs from the CPC pens")
+
+    for column, source_column, count, name in (
+        (map_column, cpc_bytes(0x949F, LARGE_GLYPH_COUNT), LARGE_GLYPH_COUNT, "E79FH"),
+        (temp_column, cpc_bytes(0x93FF, 160), 160, "E65FH"),
+    ):
+        for descriptor in range(count):
+            value = column[descriptor]
+            source = source_column[descriptor]
+            if value < 0xFE:
+                if value != source:
+                    raise ValueError(f"{block_name}.CAS {name} {descriptor:02X}H differs")
+            elif value == 0xFE and source < 171:
+                live = temp[descriptor * 2 + 1] if name == "E65FH" else None
+                if live is None or glyph_map[live] != source:
+                    raise ValueError(
+                        f"{block_name}.CAS {name} {descriptor:02X}H defers wrongly"
+                    )
+            elif value != 0xFE:
+                raise ValueError(f"{block_name}.CAS {name} {descriptor:02X}H is invalid")
+    for number in range(1, 171):
+        if tile(number) != cpc_bytes(0x953F + number * 64, 64):
+            raise ValueError(f"{block_name}.CAS tile {number} differs from the CPC tape")
+    return "CPC"
 
 
 def expected_sizes():
@@ -241,8 +302,11 @@ def verify():
         if lscode_call(0xB15C) != bytes((0xC3, save_entry & 0xFF, save_entry >> 8)):
             raise ValueError("LS2.CAS save/load entry is not hooked")
         multiload_offset = symbols["TVC_MULTILOAD"] - loader.load_address
-        if loader.payload[multiload_offset:multiload_offset + 2] != b"\xfe\x64":
-            raise ValueError("TVC_MULTILOAD does not start from the block ID in A")
+        scenario_id = runtime_support("TVC_SCENARIO_ID")
+        if loader.payload[multiload_offset:multiload_offset + 3] != bytes(
+            (0x32, scenario_id & 0xFF, scenario_id >> 8)
+        ):
+            raise ValueError("TVC_MULTILOAD does not record the block ID in A")
         if symbols["TVC_NATIVE_FONT_END"] > laser_build.TVC_SUPPORT_ADDR:
             raise ValueError("native font overlaps resident support")
         save_header = symbols["TVC_SAVE_HEADER"] - loader.load_address
@@ -291,21 +355,19 @@ def verify():
             scenario_files += 1
 
         native_graphics_files = 0
-        for block_name, block_index in laser_build.NATIVE_GRAPHICS_BLOCKS.items():
+        cpc_tapes = laser_build.source_cdt()
+        for block_name, (block_index, flag) in laser_build.NATIVE_GRAPHICS_BLOCKS.items():
             scenario = read_tap_block_data(source_tap, block_index)
-            expected = reference_descriptor_graphics(scenario)
-            low, high = split_large_graphics(expected)
-            if len(low) != LARGE_LOW_SIZE or len(high) != LARGE_HIGH_SIZE:
-                raise ValueError(f"{block_name}.CAS has an invalid native split")
+            cpc = cpc_graphics.read_cpc_scenario(cpc_tapes, flag)
             cas = read_tvc_cas(build_dir / f"{block_name.lower()}.cas")
             if cas.file_type != 0 or cas.auto_run:
                 raise ValueError(f"{block_name}.CAS has unexpected TVC metadata")
             if cas.load_address != 0x19EF:
                 raise ValueError(f"{block_name}.CAS has unexpected load address")
-            if cas.payload != expected:
-                raise ValueError(
-                    f"{block_name}.CAS does not match converted TAP block {block_index}"
-                )
+            if len(cas.payload) != LARGE_LOW_SIZE + LARGE_HIGH_SIZE:
+                raise ValueError(f"{block_name}.CAS has an invalid native size")
+            source = check_native_graphics(block_name, scenario, cpc, cas.payload)
+            print(f"verified {block_name}.CAS against {source} graphics")
             native_graphics_files += 1
 
         result = run_tool(
@@ -324,7 +386,7 @@ def verify():
 
         print(f"verified {len(EXPECTED_PATCHED_CAS)} patched CAS hashes")
         print(f"verified {scenario_files} scenario CAS payloads against the TAP")
-        print(f"verified {native_graphics_files} offline-converted graphics CAS payloads")
+        print(f"verified {native_graphics_files} native graphics CAS payloads")
         print(f"verified {len(entries)} DSK directory entries")
         print("Laser Squad clean build smoke checks passed")
 

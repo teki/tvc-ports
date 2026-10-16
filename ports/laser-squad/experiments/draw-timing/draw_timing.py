@@ -147,8 +147,11 @@ class Build:
         for addr, data in segments(self.dir / "lasersqd_tvc_hidden_video.toml"):
             emu.write(addr, data)
         emu.map_game()
-        emu.write(self.run("TVC_LARGE_TABLE_LOADED_RUN"), [1])
-        emu.write(self.run("TVC_LARGE_TABLE_PALETTE_RUN"), [0xFF])
+        # Install the snapshot scenario's pre-coloured Gxx tiles and lookups.
+        graphics = (self.dir / "g64.cas").read_bytes()[144:]
+        emu.write(0x2880, graphics[:0x1640])
+        emu.write(0x4000, graphics[0x1640:])
+        emu.write(self.run("TVC_PALETTES"), graphics[0x1640 + 0x1480:][:4])
         emu.write(self.run("TVC_PALETTE_ID_RUN"), [palette])
         return call(emu, self.run("TVC_APPLY_PALETTE_RUN"), palette)
 
@@ -186,6 +189,8 @@ SCENARIOS = [
     ("map 612AH (121 tiles)", 0x612A, 0, None, TACTICAL),
     ("map 6181H (121 tiles)", 0x6181, 0, None, TACTICAL),
     ("tile 616EH (E79FH)", 0x616E, 0x10, None, TACTICAL),
+    ("map 6181H (E65FH)", 0x6181, 0, None,
+     [(0xB716, [0x5F, 0xE6]), (0x5CFE, [0x01, 0x01]), (0x5D00, [0x45])]),
     ("raw glyph 60AFH", 0x60AF, 0x05, None, TACTICAL),
     ("text 6072H black paper", 0x6072, ord("A"),
      None, [(0x5CFE, [0x02, 0x02]), (0x5D00, [0x47])]),

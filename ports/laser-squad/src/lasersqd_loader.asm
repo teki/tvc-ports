@@ -180,19 +180,19 @@ TVC_LOAD_SAVED:
         CALL TVC_LOAD_GAME_PAYLOAD_RUN
         OR A
         RET NZ
-        ; SAVE.CAS carries the original Spectrum bytes. Regenerate the native
-        ; descriptor cache from E79FH/E8DFH before the game draws again.
-        LD A,01H
-        LD (TVC_LARGE_TABLE_LOADED_RUN),A
-        LD A,0FFH
-        LD (TVC_LARGE_TABLE_PALETTE_RUN),A
-        CALL TVC_REBUILD_LARGE_TABLE_RUN
+        ; SAVE.CAS carries the original Spectrum bytes. Its header records the
+        ; scenario ID, which selects the matching Gxx tile file. A save without
+        ; an ID keeps the resident tiles.
+        LD A,(19DFH+0EH)
+        CALL TVC_LOAD_SCENARIO_GRAPHICS_RUN
         XOR A
         LD (0B15BH),A
         RET
 
 TVC_SAVE_GAME:
         CALL TVC_MAP_GAME_PAYLOAD
+        LD A,(TVC_SCENARIO_ID_RUN)
+        LD (TVC_SAVE_HEADER+0EH),A
         LD A,50H               ; device 5, disk output
         LD (1705H),A
         XOR A
@@ -247,14 +247,20 @@ TVC_SAVE_HEADER:
         DB 00H                 ; data file type
         DW 49DFH              ; original payload length
         DB 00H                 ; no autorun
-        DS 11,00H              ; remaining application-header fields
+        DS 9,00H               ; remaining application-header fields
+        DB 00H                 ; port use: scenario ID (64H-68H) for Gxx
+        DB 00H
 
 TVC_SUPPORT_RUN EQU 21BCH
 TVC_LARGE_NATIVE_LOW_RUN EQU 2880H
 TVC_LARGE_NATIVE_LOW_SIZE EQU 1640H ; 89 glyphs * 64 bytes
 TVC_LARGE_NATIVE_SCRATCH_RUN EQU 3EC0H ; one converted raw-glyph fallback
 TVC_LARGE_NATIVE_HIGH_RUN EQU 4000H
-TVC_LARGE_NATIVE_HIGH_SIZE EQU 1800H ; 96 glyphs * 64 bytes
+TVC_LARGE_NATIVE_HIGH_SIZE EQU 1800H ; 82 tiles + three lookup pages
+TVC_MAP_COLUMN_PAGE EQU 55H        ; Gxx pages, see cpc_graphics.py
+TVC_TEMP_COLUMN_PAGE EQU 56H
+TVC_GLYPH_MAP_PAGE EQU 57H
+TVC_GXX_PALETTE EQU 5480H
 TVC_CONVERT_TABLE_RUN EQU 0B000H ; hidden VID0 nibble table, see TVC_SET_LARGE_CONVERT_COLOR
 TVC_CONVERT_TABLE_PAGE EQU 0B0H
 TVC_HIDDEN_CODE_RUN EQU 0BC00H
@@ -613,45 +619,60 @@ TVC_GAME_KEYS_DONE:
 ; Replacement for B15CH mode 1 scenario IDs. TVC_SAVELOAD already rejected
 ; save/verify and ID 67H; A and B both hold the selected block ID.
 TVC_MULTILOAD:
-        CP 64H
-        JR Z,TVC_MULTILOAD_64
-        CP 65H
-        JR Z,TVC_MULTILOAD_65
-        CP 66H
-        JR Z,TVC_MULTILOAD_66
-        CP 68H
+        LD (TVC_SCENARIO_ID_RUN),A
+        CALL TVC_SCENARIO_NAMES_RUN
         JP NZ,TVC_MULTILOAD_FAIL_RUN
-        LD DE,TVC_BLOCK_68_NAME_RUN
-        LD HL,TVC_GRAPHICS_68_NAME_RUN
-        JR TVC_MULTILOAD_SELECTED
-TVC_MULTILOAD_64:
-        LD DE,TVC_BLOCK_64_NAME_RUN
-        LD HL,TVC_GRAPHICS_64_NAME_RUN
-        JR TVC_MULTILOAD_SELECTED
-TVC_MULTILOAD_65:
-        LD DE,TVC_BLOCK_65_NAME_RUN
-        LD HL,TVC_GRAPHICS_65_NAME_RUN
-        JR TVC_MULTILOAD_SELECTED
-TVC_MULTILOAD_66:
-        LD DE,TVC_BLOCK_66_NAME_RUN
-        LD HL,TVC_GRAPHICS_66_NAME_RUN
-
-TVC_MULTILOAD_SELECTED:
-        LD (TVC_NATIVE_NAME_PTR_RUN),HL
         CALL TVC_LOAD_GAME_PAYLOAD_RUN
         OR A
         JP NZ,TVC_MULTILOAD_FAIL_RUN
-        LD DE,(TVC_NATIVE_NAME_PTR_RUN)
-        CALL LOAD_NATIVE_GRAPHICS
+        LD A,(TVC_SCENARIO_ID_RUN)
+        CALL TVC_LOAD_SCENARIO_GRAPHICS_RUN
         OR A
         JP NZ,TVC_MULTILOAD_FAIL_RUN
-        LD A,0FFH
-        LD (TVC_LARGE_TABLE_PALETTE_RUN),A
-        LD A,01H
-        LD (TVC_LARGE_TABLE_LOADED_RUN),A
-        CALL TVC_REBUILD_LARGE_TABLE_RUN
-        XOR A
         LD (0B15BH),A           ; original success flag
+        RET
+
+; Input A = scenario block ID 64H, 65H, 66H, or 68H. Output Z with
+; DE = Lxx payload name and HL = Gxx graphics name; NZ for any other ID.
+; Both name lists are four-byte entries in that order.
+TVC_SCENARIO_NAMES:
+TVC_SCENARIO_NAMES_RUN EQU TVC_SUPPORT_RUN+TVC_SCENARIO_NAMES-TVC_SUPPORT_IMAGE
+        SUB 64H
+        CP 03H
+        JR C,TVC_SCENARIO_NAMES_FOUND
+        CP 04H
+        RET NZ
+        DEC A                   ; 68H follows 66H
+TVC_SCENARIO_NAMES_FOUND:
+        ADD A,A
+        ADD A,A
+        LD C,A
+        LD B,00H
+        LD HL,TVC_BLOCK_64_NAME_RUN
+        ADD HL,BC
+        EX DE,HL
+        LD HL,TVC_GRAPHICS_64_NAME_RUN
+        ADD HL,BC
+        XOR A
+        RET
+
+; Load the pre-coloured Gxx tile file for scenario ID A. Output A follows
+; LOAD_BLOCK, or is nonzero without loading for an unknown ID.
+TVC_LOAD_SCENARIO_GRAPHICS:
+TVC_LOAD_SCENARIO_GRAPHICS_RUN EQU TVC_SUPPORT_RUN+TVC_LOAD_SCENARIO_GRAPHICS-TVC_SUPPORT_IMAGE
+        LD (TVC_SCENARIO_ID_RUN),A
+        CALL TVC_SCENARIO_NAMES_RUN
+        LD A,01H
+        RET NZ
+        EX DE,HL
+        CALL LOAD_NATIVE_GRAPHICS
+        OR A
+        RET NZ
+        ; Adopt the scenario's CPC-derived pens 1-3; the next clear applies them.
+        LD HL,TVC_GXX_PALETTE+1
+        LD DE,TVC_PALETTES_RUN+1
+        LD BC,0003H
+        LDIR
         RET
 
 TVC_MULTILOAD_FAIL:
@@ -689,21 +710,16 @@ TVC_GRAPHICS_66_NAME_RUN EQU TVC_SUPPORT_RUN+TVC_GRAPHICS_66_NAME-TVC_SUPPORT_IM
 TVC_GRAPHICS_68_NAME:
 TVC_GRAPHICS_68_NAME_RUN EQU TVC_SUPPORT_RUN+TVC_GRAPHICS_68_NAME-TVC_SUPPORT_IMAGE
         DB 3,"G68"
-TVC_NATIVE_NAME_PTR:
-TVC_NATIVE_NAME_PTR_RUN EQU TVC_SUPPORT_RUN+TVC_NATIVE_NAME_PTR-TVC_SUPPORT_IMAGE
-        DW 0000H
+TVC_SCENARIO_ID:
+TVC_SCENARIO_ID_RUN EQU TVC_SUPPORT_RUN+TVC_SCENARIO_ID-TVC_SUPPORT_IMAGE
+        DB 00H                 ; last loaded scenario block ID, saved in SAVE.CAS
 
-; Palette profiles contain the four values written to ports 60H-63H.
-; A selects the zero-based profile. Add new four-byte profiles here and select
-; them through TVC_PALETTE_ID_RUN at the appropriate game transition.
+; Write the four values for ports 60H-63H. The CPC-derived presentation uses
+; one palette on every screen, so the profile ID in A no longer selects
+; colors; the profile hooks remain at their original transitions.
 TVC_APPLY_PALETTE:
 TVC_APPLY_PALETTE_RUN EQU TVC_SUPPORT_RUN+TVC_APPLY_PALETTE-TVC_SUPPORT_IMAGE
-        ADD A,A
-        ADD A,A
-        LD E,A
-        LD D,00H
         LD HL,TVC_PALETTES_RUN
-        ADD HL,DE
         LD BC,0060H
         LD E,04H
 TVC_APPLY_PALETTE_NEXT:
@@ -713,18 +729,14 @@ TVC_APPLY_PALETTE_NEXT:
         INC C
         DEC E
         JR NZ,TVC_APPLY_PALETTE_NEXT
-        CALL TVC_BUILD_ATTRIBUTE_TABLE_RUN
-        JP TVC_REBUILD_LARGE_TABLE_RUN
+        JP TVC_BUILD_ATTRIBUTE_TABLE_RUN
 
 TVC_PALETTES:
 TVC_PALETTES_RUN EQU TVC_SUPPORT_RUN+TVC_PALETTES-TVC_SUPPORT_IMAGE
-        DB 00H,51H,54H,44H    ; profile 0: controls, black/cyan/yellow/red
-        DB 00H,50H,54H,44H    ; profile 1: setup, black/green/yellow/red
-        DB 00H,50H,51H,54H    ; profile 2: team, black/green/cyan/yellow
-        DB 00H,15H,51H,54H    ; profile 3: placement, black/grey/cyan/yellow
-        DB 00H,51H,54H,45H    ; profile 4: movement, black/cyan/yellow/magenta
-        DB 00H,54H,50H,51H    ; profile 5: tactical, black/yellow/green/cyan
-        DB 00H,15H,54H,51H    ; profile 6: firing, black/white/yellow/cyan
+        ; CPC pens 0-3 as TVC colors. Starts as scenario 1's black, bright
+        ; red (pink), bright magenta (pastel magenta), and bright white; each
+        ; Gxx load replaces pens 1-3 with that scenario's CPC colors.
+        DB 00H,44H,45H,55H
 
 TVC_PALETTE_ID:
 TVC_PALETTE_ID_RUN EQU TVC_SUPPORT_RUN+TVC_PALETTE_ID-TVC_SUPPORT_IMAGE
@@ -772,33 +784,6 @@ TVC_BUILD_ATTRIBUTE_NEXT:
         INC A
         CP 40H
         JR NZ,TVC_BUILD_ATTRIBUTE_NEXT
-        RET
-
-; Scenario Gxx files arrive in descriptor order as neutral slot-3 masks. Once
-; loaded, resolve all 185 entries to the current palette in one mapped pass.
-; Later palette transitions repeat that pass from the pristine Spectrum source
-; at E8DFH; the hot draw path therefore performs only direct native copies.
-TVC_REBUILD_LARGE_TABLE:
-TVC_REBUILD_LARGE_TABLE_RUN EQU TVC_SUPPORT_RUN+TVC_REBUILD_LARGE_TABLE-TVC_SUPPORT_IMAGE
-        LD A,(TVC_LARGE_TABLE_LOADED_RUN)
-        OR A
-        RET Z
-        LD A,(TVC_PALETTE_ID_RUN)
-        LD C,A
-        LD A,(TVC_LARGE_TABLE_PALETTE_RUN)
-        CP C
-        RET Z
-        LD A,C
-        LD (TVC_LARGE_TABLE_PALETTE_RUN),A
-        LD A,(0003H)
-        LD (TVC_NATIVE_MAPPER_RUN),A
-        AND 0DFH
-        LD (0003H),A
-        OUT (02H),A
-        CALL TVC_REBUILD_LARGE_TABLE_MAPPED_RUN
-        LD A,(TVC_NATIVE_MAPPER_RUN)
-        LD (0003H),A
-        OUT (02H),A
         RET
 
 ; Replacement for the hardware-specific body at 602DH. The retired Spectrum
@@ -910,13 +895,15 @@ TVC_MAP_COLOR_RUN EQU TVC_SUPPORT_RUN+TVC_MAP_COLOR-TVC_SUPPORT_IMAGE
 TVC_INK_PALETTE_MAPS:
 TVC_INK_PALETTE_MAPS_RUN EQU TVC_SUPPORT_RUN+TVC_INK_PALETTE_MAPS-TVC_SUPPORT_IMAGE
         ; Spectrum inks: black, blue, red, magenta, green, cyan, yellow, white
-        DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 0: cyan/yellow/red
-        DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 1: green/yellow/red
-        DB 00H,02H,03H,02H,01H,02H,03H,02H ; profile 2: white -> cyan
-        DB 00H,02H,03H,03H,01H,02H,03H,01H ; profile 3: cyan/yellow teams
-        DB 00H,01H,03H,03H,01H,01H,02H,02H ; profile 4: movement accents
-        DB 00H,02H,01H,01H,02H,03H,01H,01H ; profile 5: blue floors -> green
-        DB 00H,03H,01H,01H,01H,03H,02H,01H ; profile 6: firing markers
+        ; Matches the CPC release: green/cyan/blue labels in pastel magenta,
+        ; red/magenta prompts in pink, yellow/white text and highlights white.
+        DB 00H,02H,01H,01H,02H,02H,03H,03H ; profile 0
+        DB 00H,02H,01H,01H,02H,02H,03H,03H ; profile 1
+        DB 00H,02H,01H,01H,02H,02H,03H,03H ; profile 2
+        DB 00H,02H,01H,01H,02H,02H,03H,03H ; profile 3
+        DB 00H,02H,01H,01H,02H,02H,03H,03H ; profile 4
+        DB 00H,02H,01H,01H,02H,02H,03H,03H ; profile 5
+        DB 00H,02H,01H,01H,02H,02H,03H,03H ; profile 6
 
 ; Convert a GRAPHICS 4 palette slot to the byte pattern for four pixels.
 ; Input A = slot 0-3, output A = 00H/F0H/0FH/FFH.
@@ -1129,17 +1116,16 @@ TVC_JP_HL:
 TVC_JP_HL_RUN EQU TVC_SUPPORT_RUN+TVC_JP_HL-TVC_SUPPORT_IMAGE
         JP (HL)
 
+; Replacement for the original 60AFH glyph draw. A is a Spectrum glyph; the
+; Gxx glyph map selects its CPC tile, or the raw converter when none matches.
 TVC_DRAW_LARGE:
-        LD (TVC_RAW_LARGE_GLYPH_RUN),A
+        LD C,A
         LD A,(0003H)
         LD (TVC_NATIVE_MAPPER_RUN),A
         AND 0DFH
         LD (0003H),A
         OUT (02H),A
-        LD A,(TVC_RAW_LARGE_GLYPH_RUN)
-        CALL TVC_CONVERT_RAW_LARGE_MAPPED_RUN
-        LD HL,TVC_LARGE_NATIVE_SCRATCH_RUN
-        CALL TVC_DRAW_LARGE_SOURCE_MAPPED_RUN
+        CALL TVC_DRAW_LARGE_GLYPH_MAPPED_RUN
         LD A,(TVC_NATIVE_MAPPER_RUN)
         LD (0003H),A
         OUT (02H),A
@@ -1148,8 +1134,9 @@ TVC_DRAW_LARGE:
 ; Native replacement for the common 844CH Spectrum pixel plotter. It keeps
 ; the original contract: Y=(5DA3H) and X=(5DA4H) before the 0808H inset;
 ; mode (5DA6H) 1 clears, 2 inverts, and any other value sets and stores the
-; logical collision mask at 5DA5H. A pixel is "set" when it shows the cell's
-; mapped ink. Ink and paper patterns come from the cell's B239H delta/paper
+; logical collision mask at 5DA5H. A pixel is "set" when it is not the cell's
+; paper. Set writes the cell's ink, clear writes paper, and invert XORs the
+; pixel with ink XOR paper. Patterns come from the cell's B239H delta/paper
 ; pair. A returns the updated VID0 byte; C is clobbered.
 TVC_PLOT_PIXEL:
         LD DE,(5DA3H)
@@ -1221,30 +1208,30 @@ TVC_PLOT_MASK_DONE:
         JR Z,TVC_PLOT_CLEAR
         CP 02H
         JR Z,TVC_PLOT_INVERT
+        ; A Spectrum bit is set wherever the pixel is not paper, whatever ink
+        ; drew it: the cell's attribute may have changed since (wall pixels
+        ; under a trajectory or crosshair attribute still block shots).
         LD A,(HL)
-        XOR D
+        XOR E
         AND B
-        JR Z,TVC_PLOT_ALREADY_INK
-        LD E,A
-        XOR A
-        LD (5DA5H),A
-        LD A,E
-        JR TVC_PLOT_WRITE
-TVC_PLOT_ALREADY_INK:
+        JR Z,TVC_PLOT_STORE_COLLISION
         LD A,0F0H               ; L bit 0 is X bit 2: select 80H >> (X AND 7)
         BIT 0,L
         JR Z,TVC_PLOT_COLLISION
         LD A,0FH
 TVC_PLOT_COLLISION:
         AND B
+TVC_PLOT_STORE_COLLISION:
         LD (5DA5H),A
-        LD E,(HL)
-        JR TVC_PLOT_RESTORE
-TVC_PLOT_INVERT:
         LD A,(HL)
         XOR D
         AND B
-        JR NZ,TVC_PLOT_WRITE    ; not ink: becomes ink
+        JR TVC_PLOT_WRITE
+TVC_PLOT_INVERT:
+        LD A,D                  ; toggle by ink XOR paper: paper and ink swap,
+        XOR E                   ; any other color changes reversibly, so a
+        AND B                   ; second XOR restores walls under the cross
+        JR TVC_PLOT_WRITE
 TVC_PLOT_CLEAR:
         LD A,(HL)
         XOR E
@@ -1328,9 +1315,11 @@ TVC_RECOLOR_NEXT:
         RET
 
 ; Batch-only replacement for the original 616EH tile descriptor lookup; VID0
-; must already be mapped. The scenario map's E79FH table indexes the
-; precolored native table directly. Temporary descriptor tables (notably
-; E65FH) retain a converted raw fallback.
+; must already be mapped. The Gxx file supplies three lookup pages: E79FH
+; descriptor -> tile, E65FH descriptor -> tile, and Spectrum glyph -> tile.
+; A descriptor column value of FEH defers to the live glyph (E65FH unit
+; sprites rewritten by 6D10H); a glyph map value of FFH, or any other
+; descriptor table, uses the raw Spectrum converter.
 TVC_DRAW_LARGE_LOOKUP_MAPPED:
 TVC_DRAW_LARGE_LOOKUP_MAPPED_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_LARGE_LOOKUP_MAPPED-TVC_SUPPORT_IMAGE
         LD B,A
@@ -1346,8 +1335,28 @@ TVC_DRAW_LARGE_LOOKUP_MAPPED_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_LARGE_LOOKUP_MAPPE
         LD HL,0E79FH
         OR A
         SBC HL,DE
-        JR NZ,TVC_DRAW_LARGE_LOOKUP_RAW
-        LD A,B
+        LD H,TVC_MAP_COLUMN_PAGE
+        JR Z,TVC_DRAW_LARGE_COLUMN
+        LD HL,0E65FH
+        OR A
+        SBC HL,DE
+        JR NZ,TVC_DRAW_LARGE_GLYPH_MAPPED
+        LD H,TVC_TEMP_COLUMN_PAGE
+TVC_DRAW_LARGE_COLUMN:
+        LD L,B
+        LD A,(HL)
+        CP 0FEH
+        JR C,TVC_DRAW_LARGE_TILE
+; Input C = Spectrum glyph and (5D00H) = attribute; VID0 mapped.
+TVC_DRAW_LARGE_GLYPH_MAPPED:
+TVC_DRAW_LARGE_GLYPH_MAPPED_RUN EQU TVC_SUPPORT_RUN+TVC_DRAW_LARGE_GLYPH_MAPPED-TVC_SUPPORT_IMAGE
+        LD H,TVC_GLYPH_MAP_PAGE
+        LD L,C
+        LD A,(HL)
+        INC A
+        JR Z,TVC_DRAW_LARGE_LOOKUP_RAW
+        DEC A
+TVC_DRAW_LARGE_TILE:
         LD DE,TVC_LARGE_NATIVE_LOW_RUN
         CP 59H
         JR C,TVC_DRAW_LARGE_DESCRIPTOR_LOW
@@ -1430,9 +1439,6 @@ TVC_LARGE_TABLE_LOADED_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_TABLE_LOADED-TVC_SUPPOR
 TVC_TEMP_LARGE_LOADED:
 TVC_TEMP_LARGE_LOADED_RUN EQU TVC_SUPPORT_RUN+TVC_TEMP_LARGE_LOADED-TVC_SUPPORT_IMAGE
         DB 00H
-TVC_LARGE_TABLE_PALETTE:
-TVC_LARGE_TABLE_PALETTE_RUN EQU TVC_SUPPORT_RUN+TVC_LARGE_TABLE_PALETTE-TVC_SUPPORT_IMAGE
-        DB 0FFH
 TVC_RAW_LARGE_GLYPH:
 TVC_RAW_LARGE_GLYPH_RUN EQU TVC_SUPPORT_RUN+TVC_RAW_LARGE_GLYPH-TVC_SUPPORT_IMAGE
         DB 00H
@@ -1566,44 +1572,6 @@ TVC_CONVERT_RAW_LARGE_MAPPED_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_CONVERT_RAW_LARGE_M
         LD DE,TVC_LARGE_NATIVE_SCRATCH_RUN
         JP TVC_CONVERT_LARGE_SOURCE_RUN
 
-; Recreate all final-color descriptor entries from pristine E79FH/E8DFH data.
-TVC_REBUILD_LARGE_TABLE_MAPPED:
-TVC_REBUILD_LARGE_TABLE_MAPPED_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_REBUILD_LARGE_TABLE_MAPPED-TVC_HIDDEN_CODE_IMAGE
-        LD IX,0E79FH
-        LD IY,TVC_LARGE_NATIVE_LOW_RUN
-        LD A,0B9H
-        LD (TVC_LARGE_REBUILD_COUNT_RUN),A
-TVC_REBUILD_LARGE_NEXT:
-        LD A,(TVC_LARGE_REBUILD_COUNT_RUN)
-        CP 60H
-        JR NZ,TVC_REBUILD_LARGE_DEST_READY
-        LD IY,TVC_LARGE_NATIVE_HIGH_RUN
-TVC_REBUILD_LARGE_DEST_READY:
-        LD A,(IX+00H)
-        CALL TVC_SET_LARGE_CONVERT_COLOR_RUN
-        LD A,(IX+01H)
-        LD L,A
-        LD H,00H
-        ADD HL,HL
-        ADD HL,HL
-        ADD HL,HL
-        ADD HL,HL
-        ADD HL,HL
-        LD DE,0E8DFH
-        ADD HL,DE
-        PUSH IY
-        POP DE
-        CALL TVC_CONVERT_LARGE_SOURCE_RUN
-        PUSH DE
-        POP IY
-        INC IX
-        INC IX
-        LD A,(TVC_LARGE_REBUILD_COUNT_RUN)
-        DEC A
-        LD (TVC_LARGE_REBUILD_COUNT_RUN),A
-        JR NZ,TVC_REBUILD_LARGE_NEXT
-        RET
-
 ; Build the converter's nibble table for one Spectrum attribute. Entry n and
 ; entry n*16 of the B000H page hold the final byte for Spectrum nibble n:
 ; paper XOR ((n*11H) AND (ink XOR paper)). Skip the rebuild when the
@@ -1703,9 +1671,6 @@ TVC_CONVERT_LARGE_BYTE:
         JR NZ,TVC_CONVERT_LARGE_BYTE
         RET
 
-TVC_LARGE_REBUILD_COUNT:
-TVC_LARGE_REBUILD_COUNT_RUN EQU TVC_HIDDEN_CODE_RUN+TVC_LARGE_REBUILD_COUNT-TVC_HIDDEN_CODE_IMAGE
-        DB 00H
 ; Last delta/paper pair in the B000H table. A delta of 01H is impossible, so
 ; the first conversion always builds the table.
 TVC_CONVERT_PAIR:

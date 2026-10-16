@@ -21,3 +21,5 @@ and individual ports.
   three Spectrum beeper routines to the TVC sound DAC.
 - [Laser Squad drawing speed](laser-squad-draw-speed.md): bring the slow
   drawing paths closer to Spectrum speed with identical output.
+- [Laser Squad CPC graphics](laser-squad-cpc-graphics.md): use the Amstrad
+  CPC map tiles and per-scenario palettes (in progress).

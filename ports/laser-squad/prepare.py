@@ -37,9 +37,30 @@ def acquire_source() -> Path:
     )
 
 
+def source_cdt() -> list[Path]:
+    """Download if needed and return the verified CPC tapes (Side A, Side B).
+
+    They supply the map graphics and palettes; see cpc_graphics.py.
+    """
+    with (PORT_ROOT / "port.toml").open("rb") as source:
+        config = tomllib.load(source)["source_cdt"]
+    return [
+        ensure_zip_member(
+            url=config["url"],
+            archive_path=PORT_ROOT / config["archive_path"],
+            archive_sha256=config["archive_sha256"],
+            member_name=member["name"],
+            output_path=PORT_ROOT / member["path"],
+            output_sha256=member["sha256"],
+        )
+        for member in config["members"]
+    ]
+
+
 def prepare(build_dir: Path):
     config = source_config()
     source_tap = acquire_source()
+    source_cdt()
     prepared_dir = build_dir / "prepared"
     prepared_dir.mkdir(parents=True, exist_ok=True)
     generated = prepared_dir / "LASERSQD.TAP.toml"
