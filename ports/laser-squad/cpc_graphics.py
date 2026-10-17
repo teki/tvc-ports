@@ -49,6 +49,12 @@ CPC_MAP_COLUMN_ADDR = 0x949F
 CPC_TILE_ADDR = 0x953F
 CPC_PALETTE_ADDR = 0x644E   # Gate Array colours for pens 1-3; pen 0 is black
 
+# 6D10H picks a unit's live glyph from (B71EH)[8 * (B71CH)[kind + weapon] +
+# facing]. Both pointers and tables are in the scenario block, and the CPC
+# block holds the same table with CPC tile numbers.
+UNIT_ROWS_POINTER = 0xB71C
+UNIT_GLYPHS_POINTER = 0xB71E
+
 # Fixed CPC hardware colour -> TVC palette byte (bit 6 intensity, 4 green,
 # 2 red, 0 blue). The scenario 1 choices (pink -> bright red, pastel magenta
 # -> bright magenta) were picked by the user; pastel blue and cyan keep their
@@ -70,6 +76,12 @@ INK_SLOTS = (0, 2, 1, 1, 2, 2, 3, 3)
 # Largest lit-pixel difference accepted when matching a Spectrum glyph to a
 # CPC tile for raw 60AFH callers and live unit sprites.
 GLYPH_MATCH_LIMIT = 16
+
+# Largest mean lit-pixel difference over an 8-glyph row of the CPC unit table
+# before the row is rejected. Some CPC scenarios reuse the tile numbers of a
+# weapon they do not draw (scenario 2's dagger rows name explosion and door
+# tiles); those rows average over 60, the rows that hold real sprites under 35.
+UNIT_ROW_LIMIT = 48
 
 
 def read_cdt_blocks(path: Path) -> list[bytes]:
@@ -147,6 +159,31 @@ def _descriptors(scenario: bytes, address: int, count: int) -> list[tuple[int, i
     return [(table[index * 2], table[index * 2 + 1]) for index in range(count)]
 
 
+def _unit_table(scenario: bytes) -> bytes:
+    """Return the unit glyph rows that 6D10H indexes through B71CH/B71EH."""
+    def word(address: int) -> int:
+        offset = address - SCENARIO_ADDR
+        return scenario[offset] | scenario[offset + 1] << 8
+
+    rows_addr, glyphs_addr = word(UNIT_ROWS_POINTER), word(UNIT_GLYPHS_POINTER)
+    rows = scenario[rows_addr - SCENARIO_ADDR:glyphs_addr - SCENARIO_ADDR]
+    start = glyphs_addr - SCENARIO_ADDR
+    return scenario[start:start + (max(rows) + 1) * 8]
+
+
+def _cpc_unit_table(cpc: bytes, table: bytes) -> bytes:
+    """Find the CPC copy of the unit glyph table, which names CPC tiles."""
+    best = max(
+        range(len(cpc) - len(table) + 1),
+        key=lambda offset: sum(
+            a == b for a, b in zip(cpc[offset:offset + len(table)], table)),
+    )
+    found = cpc[best:best + len(table)]
+    if sum(a == b for a, b in zip(found, table)) < len(table) * 3 // 4:
+        raise ValueError("CPC scenario has no matching unit glyph table")
+    return found
+
+
 def _colorize(native: bytes, attribute: int) -> bytes:
     ink = INK_SLOTS[attribute & 7]
     paper = INK_SLOTS[(attribute >> 3) & 7]
@@ -157,12 +194,19 @@ def _colorize(native: bytes, attribute: int) -> bytes:
 
 
 def _glyph_map(
-    scenario: bytes, tiles: list[bytes], pairs: list[tuple[int, int]]
+    scenario: bytes,
+    tiles: list[bytes],
+    pairs: list[tuple[int, int]],
+    unit_pairs: dict[int, int],
+    unit_glyphs: set[int],
 ) -> bytes:
     """Map each Spectrum glyph to a tile for raw draws and live unit glyphs.
 
-    Prefer the tile the CPC descriptor columns pair with that glyph (its own
-    number first), then the closest lit-pixel shape.
+    A unit glyph takes the tile the CPC unit table names for it. Otherwise
+    prefer the tile the CPC descriptor columns pair with that glyph (its own
+    number first), then the closest lit-pixel shape. A unit glyph without a
+    CPC sprite takes the closest shape at any distance rather than the raw
+    converter, so it stays a coloured CPC soldier.
     """
     masks = [_native_mask(tile) for tile in tiles]
     result = bytearray([RAW_GLYPH] * 256)
@@ -171,6 +215,9 @@ def _glyph_map(
         source = _spectrum_mask(_spectrum_glyph(scenario, glyph))
         if not any(source):
             result[glyph] = 0
+            continue
+        if glyph in unit_pairs:
+            result[glyph] = unit_pairs[glyph]
             continue
         paired = [tile for spectrum, tile in pairs if spectrum == glyph and tile]
         if paired:
@@ -186,7 +233,7 @@ def _glyph_map(
             key = (distance, tile != glyph, tile)
             if best is None or key < best[0]:
                 best = (key, tile)
-        if best and best[0][0] <= GLYPH_MATCH_LIMIT:
+        if best and (best[0][0] <= GLYPH_MATCH_LIMIT or glyph in unit_glyphs):
             result[glyph] = best[1]
     return bytes(result)
 
@@ -282,7 +329,23 @@ def cpc_tile_set(scenario: bytes, cpc: bytes) -> tuple[list[bytes], bytes, bytes
         for glyph, tile in zip(spectrum_map + temp_glyphs, map_column + temp_cpc)
         if tile < MAX_TILES
     ]
-    glyph_map = _glyph_map(scenario, tiles, pairs)
+    units = _unit_table(scenario)
+    cpc_units = _cpc_unit_table(cpc, units)
+    masks = [_native_mask(tile) for tile in tiles]
+    unit_pairs = {}
+    for row in range(0, len(units), 8):
+        row_pairs = [
+            (glyph, tile)
+            for glyph, tile in zip(units[row:row + 8], cpc_units[row:row + 8])
+            if 0 < tile < MAX_TILES
+        ]
+        distance = sum(
+            _mask_distance(_spectrum_mask(_spectrum_glyph(scenario, glyph)), masks[tile])
+            for glyph, tile in row_pairs
+        )
+        if row_pairs and distance <= UNIT_ROW_LIMIT * len(row_pairs):
+            unit_pairs.update(row_pairs)
+    glyph_map = _glyph_map(scenario, tiles, pairs, unit_pairs, set(units))
     # Entries past the CPC table (scenario 2's 171) follow the glyph map. In
     # E65FH, 6D10H also rewrites unit glyphs at run time: an entry whose static
     # CPC tile is what its glyph maps to follows those writes.

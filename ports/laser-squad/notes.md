@@ -958,6 +958,22 @@ stored as `FEH`, so the live glyph decides. This follows `6D10H`, which
 rewrites unit glyphs at `E660H+2n` as soldiers turn. Scenario 2's two `E79FH`
 entries that name tile 171 (inside CPC screen memory) also use `FEH`.
 
+Live unit glyphs come from `6D10H`: `(B71EH)[8 * (B71CH)[kind + weapon] +
+facing]`, with both tables in the scenario block. The CPC block holds the same
+table with CPC tile numbers (scenario 2 at `708BH`, equal except glyph 180 →
+tile 150). The glyph map takes those tile numbers first, row by row. Many
+weapon rows never appear in the descriptor columns, and shape matching sent
+them to another weapon's sprite or to the white raw converter. Examples are
+scenario 3's dagger and heavy-weapon rows, and scenario 2's dagger facing down
+(glyph 118). Some CPC rows name tiles that are not soldiers: scenario 2's
+dagger rows (118-122, 150-154) are explosions and doors, and `68H`'s row 1
+(155-162) is circles and a door. A row whose mean lit-pixel distance exceeds
+48 is rejected, because real sprite rows stay under 35 and those rows exceed
+60. Unit glyphs without a CPC sprite take the closest CPC soldier at any
+distance, so in scenario 2 a dagger holder uses the nearest other
+weapon's soldier sprite rather than drawing white (the user's choice over
+team-coloured Spectrum dagger sprites).
+
 `TVC_DRAW_LARGE_LOOKUP_MAPPED` now selects the `5500H` or `5600H` column for
 the two scenario tables and the glyph page for any other table, then copies
 the pre-coloured tile. `60AFH` callers go through the same glyph page. The
