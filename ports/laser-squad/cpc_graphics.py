@@ -55,6 +55,14 @@ CPC_PALETTE_ADDR = 0x644E   # Gate Array colours for pens 1-3; pen 0 is black
 UNIT_ROWS_POINTER = 0xB71C
 UNIT_GLYPHS_POINTER = 0xB71E
 
+# Map values below 6EH have a 12-byte record at (B726H); byte 8 is the door
+# type (1 closed, 2 open, 3 locked) and byte 9 the value after OPEN/CLOSE.
+DOOR_RECORDS_POINTER = 0xB726
+DOOR_RECORD_SIZE = 12
+DOOR_RECORD_COUNT = 0x6E
+DOOR_CLOSED = 1
+DOOR_OPEN = 2
+
 # Fixed CPC hardware colour -> TVC palette byte (bit 6 intensity, 4 green,
 # 2 red, 0 blue). The scenario 1 choices (pink -> bright red, pastel magenta
 # -> bright magenta) were picked by the user; pastel blue and cyan keep their
@@ -182,6 +190,42 @@ def _cpc_unit_table(cpc: bytes, table: bytes) -> bytes:
     if sum(a == b for a, b in zip(found, table)) < len(table) * 3 // 4:
         raise ValueError("CPC scenario has no matching unit glyph table")
     return found
+
+
+def _door_toggles(scenario: bytes) -> dict[int, tuple[int, int]]:
+    """Return {map value: (door type, value after OPEN/CLOSE)} for doors."""
+    pointer = DOOR_RECORDS_POINTER - SCENARIO_ADDR
+    offset = int.from_bytes(scenario[pointer:pointer + 2], "little") - SCENARIO_ADDR
+    doors = {}
+    for value in range(DOOR_RECORD_COUNT):
+        record = scenario[offset + value * DOOR_RECORD_SIZE:][:DOOR_RECORD_SIZE]
+        if record[8] in (DOOR_CLOSED, DOOR_OPEN):
+            doors[value] = record[8], record[9]
+    return doors
+
+
+def _fill_door_tiles(scenario: bytes, temp_cpc: bytes) -> bytes:
+    """Give door states the CPC never names a tile for one of a twin door.
+
+    The CPC column has 0 for some door states the Spectrum logic still
+    reaches; scenario 1's sliding door closes from 95 to 44, and only the
+    other door's closed state (104) has a tile. A state takes the tile of a
+    door state of the same type whose toggle target draws the same CPC tile.
+    """
+    doors = _door_toggles(scenario)
+    result = bytearray(temp_cpc)
+    for value, (kind, target) in doors.items():
+        if temp_cpc[value] or not temp_cpc[target]:
+            continue
+        twins = [
+            temp_cpc[other]
+            for other, (other_kind, other_target) in doors.items()
+            if other != value and other_kind == kind and temp_cpc[other]
+            and temp_cpc[other_target] == temp_cpc[target]
+        ]
+        if twins:
+            result[value] = twins[0]
+    return bytes(result)
 
 
 def _colorize(native: bytes, attribute: int) -> bytes:
@@ -312,7 +356,8 @@ def cpc_tile_set(scenario: bytes, cpc: bytes) -> tuple[list[bytes], bytes, bytes
         for tile in range(1, MAX_TILES)
     ]
     map_column = cpc_bytes(CPC_MAP_COLUMN_ADDR, LARGE_GLYPH_COUNT)
-    temp_cpc = cpc_bytes(CPC_TEMP_COLUMN_ADDR, TEMP_DESCRIPTOR_COUNT)
+    temp_cpc = _fill_door_tiles(
+        scenario, cpc_bytes(CPC_TEMP_COLUMN_ADDR, TEMP_DESCRIPTOR_COUNT))
 
     # The CPC copy of the scenario must describe the same map as the
     # Spectrum one; most descriptor glyphs keep their numbers.

@@ -974,6 +974,33 @@ distance, so in scenario 2 a dagger holder uses the nearest other
 weapon's soldier sprite rather than drawing white (the user's choice over
 team-coloured Spectrum dagger sprites).
 
+Doors use a 12-byte record per map value below `6EH` at `(B726H)` (`67F7H`).
+Byte 8 is the door type (1 closed, 2 open, 3 locked) and byte 9 the value
+that OPEN/CLOSE writes to the map cell (`79F7H`, `7A19H`). In scenario 1 the
+sliding door is 44 closed and 95 open. The other double door is 104 closed and
+106 open, with 43 as its locked state. The CPC column draws 95 and 106 as tile
+104 and closed 104 as tile 43, but has 0 for 44. Closing that door therefore
+left an empty cell. A door state with a zero column now takes the tile of a
+same-type state whose toggle target draws the same CPC tile, so 44 uses tile
+43. No other scenario has such a state. The CPC rewrites its `93FFH` column at
+run time (its `6D10H` stores the tile there), so its zeros do not show what
+the CPC itself draws.
+
+The CPC's door records (`77F1H` in its scenario 1 block) match the Spectrum
+ones byte for byte, so the CPC also closes 95 to 44, and its `93FFH` column
+is rewritten only for units. The original CPC release has the same bug: the
+user confirmed that the closed sliding door is invisible on the CPC too. The
+port shows it as on the Spectrum.
+
+Other zero column entries were checked for reachability: initial map, door
+toggles (`+9`), unlocking (`+0BH`, type 3) and destruction (`8030H`: damage at
+least `+3` turns the cell into `+4`, chained by `9868H`). Every other
+reachable `E65FH` zero is scenario 3's value 0, which is black on black on the
+Spectrum too. The rest are unreachable. The reachable `E79FH` zeros (scenario 1:
+46, 95, 106; scenario 2: 35; scenario 3: 0) are 4-24 pixel marks or black.
+The CPC leaves them blank on purpose and never rewrites `949FH` (it only loads
+it as the table pointer), so the port matches the CPC there.
+
 `TVC_DRAW_LARGE_LOOKUP_MAPPED` now selects the `5500H` or `5600H` column for
 the two scenario tables and the glyph page for any other table, then copies
 the pre-coloured tile. `60AFH` callers go through the same glyph page. The

@@ -70,6 +70,10 @@ EXPECTED_SCENARIO_PALETTES = {
     "G66": (bytes((0x4E, 0x4C, 0x4A)), bytes((0x00, 0x14, 0x44, 0x54))),  # orange, bright red, bright yellow
     "G68": (bytes((0x4E, 0x5E, 0x4A)), bytes((0x00, 0x44, 0x14, 0x54))),  # orange, yellow, bright yellow
 }
+# E65FH door states whose CPC column is 0 but the Spectrum logic reaches:
+# scenario 1's sliding door closes from 95 to 44, drawn as the closed double
+# door (tile 43) like its twin 104.
+EXPECTED_DOOR_TILES = {"G64": {0x2C: 43}}
 EXPECTED_INK_PALETTE_MAPS = bytes((0, 2, 1, 1, 2, 2, 3, 3) * 7)
 REFERENCE_SLOT_BYTES = (0x00, 0xF0, 0x0F, 0xFF)
 
@@ -150,9 +154,14 @@ def check_native_graphics(block_name, scenario, cpc, payload):
     if palette != expected_palette:
         raise ValueError(f"{block_name}.CAS palette differs from the CPC pens")
 
+    door_column = bytearray(cpc_bytes(0x93FF, 160))
+    for descriptor, door_tile in EXPECTED_DOOR_TILES.get(block_name, {}).items():
+        if door_column[descriptor] != 0:
+            raise ValueError(f"{block_name} CPC E65FH {descriptor:02X}H is not blank")
+        door_column[descriptor] = door_tile
     for column, source_column, count, name in (
         (map_column, cpc_bytes(0x949F, LARGE_GLYPH_COUNT), LARGE_GLYPH_COUNT, "E79FH"),
-        (temp_column, cpc_bytes(0x93FF, 160), 160, "E65FH"),
+        (temp_column, door_column, 160, "E65FH"),
     ):
         for descriptor in range(count):
             value = column[descriptor]
